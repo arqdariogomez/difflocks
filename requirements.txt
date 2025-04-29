@@ -1,0 +1,14 @@
+accelerate
+torch>=2.1
+torchvision
+opencv-python
+mediapipe
+trimesh
+jsonmerge
+dctorch
+einops
+torchdiffeq
+torchsde
+wheel 
+setuptools
+libigl
