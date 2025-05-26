@@ -10,13 +10,16 @@ This repository contains official inference and training code for DiffLocks, whi
 
 ## Requirements 
 
-DiffLocks dependencies can be installed from the provided `requirements.txt`: 
+DiffLocks dependencies can be installed from the provided `requirements.txt` which can be installed in a virtual environment: 
 
+	$ python3 -m venv ./difflocks_env
+	$ source ./difflocks_env/bin/activate
     $ pip install -r ./requirements.txt
 
 Afterwards we need to install custom CUDA kernels for the diffusion model:
 * [NATTEN](https://github.com/SHI-Labs/NATTEN/tree/main) for the sparse (neighborhood) attention used at low levels of the hierarchy.
 * [FlashAttention-2](https://github.com/Dao-AILab/flash-attention) for global attention.
+Please double check that you install Natten for torch 2.5.0 (as per requierments.txt).
 
 Finally if you want to perform inference, you need to download the checkpoints for the trained models. 
 The pretrained checkpoints can be downloaded by following [this section](#download-pretrained-checkpoints):
