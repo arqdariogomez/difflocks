@@ -1,6 +1,6 @@
 # DiffLocks: Generating 3D Hair from a Single Image using Diffusion Models #
 
-[**Paper**](TODO) | [**Project Page**](https://radualexandru.github.io/difflocks/)
+[**Paper**](https://arxiv.org/abs/2505.06166) | [**Project Page**](https://radualexandru.github.io/difflocks/)
 
 <p align="middle">
   <img src="imgs/teaser.png" width="650"/>
