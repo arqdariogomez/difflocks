@@ -8,6 +8,13 @@ from inference.img2hair import DiffLocksInference
 import subprocess
 import os
 import argparse
+import torch
+import numpy as np
+import random
+
+torch.manual_seed(5)
+np.random.seed(5)
+random.seed(5)
 
 def run():
 
@@ -30,8 +37,6 @@ def run():
 
     print("args is", args)
     
-    out_path="./outputs_inference/"
-
     difflocks= DiffLocksInference(args.strand_checkpoint_path, args.difflocks_config_path, args.difflocks_checkpoint_path, args.rgb2mat_checkpoint_path)
 
 
@@ -43,7 +48,7 @@ def run():
 
     #create blender file and optionally an alembic file
     if args.blender_path!="":
-        cmd=[args.blender_path, "-t", str(args.blender_nr_threads), "--background", "--python", "./inference/npz2blender.py", "--", "--input_npz", os.path.join(out_path,"difflocks_output_strands.npz"), "--out_path", args.out_path, "--strands_subsample", str(args.blender_strands_subsample), "--vertex_subsample", str(args.blender_vertex_subsample), "--alembic_resolution", str(args.alembic_resolution) ]
+        cmd=[args.blender_path, "-t", str(args.blender_nr_threads), "--background", "--python", "./inference/npz2blender.py", "--", "--input_npz", os.path.join(args.out_path,"difflocks_output_strands.npz"), "--out_path", args.out_path, "--strands_subsample", str(args.blender_strands_subsample), "--vertex_subsample", str(args.blender_vertex_subsample), "--alembic_resolution", str(args.alembic_resolution) ]
         if args.do_shrinkwrap:
             cmd.append("--shrinkwrap")
         if args.export_alembic:
