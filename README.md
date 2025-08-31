@@ -57,7 +57,7 @@ To run inference on an RGB and create 3D strands use:
 		--img_path=./samples/medium_11.png \
 		--out_path=./outputs_inference/ 
 
-You also have options to export a `.blend` file and an alembic file by specifying `--blender_path` and `--export-alembic` in the above script. 
+You also have options to export a `.blend` file and an alembic file by specifying `--blender_path` and `--export_alembic` in the above script. 
 Note that the blender path corresponds to the blender executable with version 4.1.1. It will likely not work with other versions. 
 
 	

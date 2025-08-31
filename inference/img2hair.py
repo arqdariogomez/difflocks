@@ -195,7 +195,14 @@ def crop_face(image, face_landmarks, output_size, crop_size_multiplier=2.8):
         value=(0, 0, 0)  # Black padding
     )
 
-    padded_image = cv2.resize(padded_image, (output_size, output_size))
+    # Decide interpolation method based on whether we’re upscaling or downscaling
+    h, w = padded_image.shape[:2]
+    if h > output_size or w > output_size:
+        interpolation = cv2.INTER_AREA  # downscaling
+    else:
+        interpolation = cv2.INTER_CUBIC  # upscaling
+
+    padded_image = cv2.resize(padded_image, (output_size, output_size), interpolation=interpolation)
 
     return padded_image
 
