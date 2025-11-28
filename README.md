@@ -22,7 +22,7 @@ You can run DiffLocks Studio on your own computer if you have an **NVIDIA GPU**.
     *   [Python 3.10 or 3.11](https://www.python.org/downloads/) (Make sure to tick **"Add Python to PATH"** during installation).
     *   [Git](https://git-scm.com/downloads).
 
-### Quick Start (Windows)
+### Quick Start (Windows) (Under tests)
 
 1.  **Download:** Click the green **Code** button above and select **Download ZIP**. Extract it to a folder.
     *   *Alternative:* Open a terminal and run `git clone https://github.com/arqdariogomez/difflocks.git`
@@ -30,7 +30,7 @@ You can run DiffLocks Studio on your own computer if you have an **NVIDIA GPU**.
 3.  **Wait:** The first run will download necessary libraries (PyTorch, etc.). This might take 5-10 minutes.
 4.  **Use:** Once finished, it will provide a local URL (usually `http://127.0.0.1:7860`). Open that link in your browser.
 
-### Quick Start (Linux)
+### Quick Start (Linux) (Under tests)
 
 1.  Clone the repository:
     ```bash
