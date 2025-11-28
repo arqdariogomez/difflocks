@@ -2,7 +2,7 @@
 
 **AI-powered 3D hair generation made easy.**
 
-This repository is an enhanced fork of [Meshcapade/DiffLocks](https://github.com/Meshcapade/difflocks), refactored to be accessible, stable, and ready for cloud deployment.
+This repository is a non-official fork of [Meshcapade/DiffLocks](https://github.com/Meshcapade/difflocks), refactored to be accessible, stable, and ready for cloud deployment.
 (Under development, currently only the kaggle notebook works, in a private way)
 
 ### 🚀 Key Features
