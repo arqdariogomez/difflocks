@@ -209,6 +209,7 @@ def crop_face(image, face_landmarks, output_size, crop_size_multiplier=2.8):
 
 
 
+
 class DiffLocksInference():
     """Optimized Engine: FP32 + Sequential Loading + Guaranteed Cleanup"""
     
