@@ -20,7 +20,10 @@ except ImportError:
     natten = None
 
 try:
-    import flash_attn
+    try:
+        import flash_attn
+    except ImportError:
+        flash_attn = None
 except ImportError:
     flash_attn = None
 
