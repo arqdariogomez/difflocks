@@ -11,6 +11,37 @@ This repository is a non-official fork of [Meshcapade/DiffLocks](https://github.
 *   **Stability Fixes:** Implements FP32 inference and VRAM cleanup to prevent crashes.
 *   **Export Tools:** Auto-generates `.OBJ` files and Blender import scripts.
 
+*   ## 💻 Local Installation
+
+You can run DiffLocks Studio on your own computer if you have an **NVIDIA GPU**.
+
+### Prerequisites
+*   **OS:** Windows 10/11 or Linux.
+*   **GPU:** NVIDIA GeForce card (GTX 1060 or better recommended) with drivers installed.
+*   **Software:**
+    *   [Python 3.10 or 3.11](https://www.python.org/downloads/) (Make sure to tick **"Add Python to PATH"** during installation).
+    *   [Git](https://git-scm.com/downloads).
+
+### Quick Start (Windows)
+
+1.  **Download:** Click the green **Code** button above and select **Download ZIP**. Extract it to a folder.
+    *   *Alternative:* Open a terminal and run `git clone https://github.com/arqdariogomez/difflocks.git`
+2.  **Run:** Double-click on **`run_windows.bat`**.
+3.  **Wait:** The first run will download necessary libraries (PyTorch, etc.). This might take 5-10 minutes.
+4.  **Use:** Once finished, it will provide a local URL (usually `http://127.0.0.1:7860`). Open that link in your browser.
+
+### Quick Start (Linux)
+
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/arqdariogomez/difflocks.git
+    cd difflocks
+    ```
+2.  Run the launcher:
+    ```bash
+    ./run_linux.sh
+    ```
+
 Original readme starts here:
 
 # DiffLocks: Generating 3D Hair from a Single Image using Diffusion Models #
