@@ -3,7 +3,7 @@
     "model": {
         "type": "image_transformer_v2_conditional",
         "cross_cond": 1,
-        "condition_dropout_rate": 0.1,
+        "condition_dropout_rate": 0.0,
         "input_channels": 65,
         "input_size": [256, 256],
         "patch_size": [2, 2],
