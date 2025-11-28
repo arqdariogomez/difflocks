@@ -1,3 +1,17 @@
+# 💇‍♀️ DiffLocks Studio
+
+**AI-powered 3D hair generation made easy.**
+
+This repository is an enhanced fork of [Meshcapade/DiffLocks](https://github.com/Meshcapade/difflocks), refactored to be accessible, stable, and ready for cloud deployment.
+
+### 🚀 Key Features
+*   **Interactive UI:** Full Gradio interface—no coding required to generate hair.
+*   **Cloud Ready:** Optimized to run on **Kaggle** and **Google Colab** (Free Tier T4 GPUs).
+*   **Stability Fixes:** Implements FP32 inference and VRAM cleanup to prevent crashes.
+*   **Export Tools:** Auto-generates `.OBJ` files and Blender import scripts.
+
+Original readme starts here:
+
 # DiffLocks: Generating 3D Hair from a Single Image using Diffusion Models #
 
 [**Paper**](https://arxiv.org/abs/2505.06166) | [**Project Page**](https://radualexandru.github.io/difflocks/)
