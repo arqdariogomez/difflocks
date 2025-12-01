@@ -44,7 +44,14 @@ class DiffLocksInference():
             os.path.join(DEFAULT_BODY_DATA_DIR, "scalp.ply"))
 
     def _clean(self, *objs):
-        import gc; [del(o) for o in objs if o]; gc.collect(); torch.cuda.empty_cache()
+        """Limpieza segura de memoria VRAM"""
+        import gc
+        # Borramos referencias locales explícitamente
+        for o in objs:
+            del o
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def rgb2hair(self, rgb_img, out_path=None):
         if out_path: os.makedirs(out_path, exist_ok=True)
