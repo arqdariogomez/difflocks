@@ -9,7 +9,8 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from typing import Optional, Any
 
-import flash_attn
+try: import flash_attn
+except: flash_attn = None
 
 
 
@@ -118,28 +119,28 @@ class SpatialTransformerSimpleV2(nn.Module):
             x_qkv = self.x_qkv_proj(x)
             pos = rearrange(pos, "... h w e -> ... (h w) e").to(x_qkv.dtype)
             x_theta = self.x_pos_emb(pos)
-            if use_flash_2(x_qkv):
+            if True: # Force SDPA for Kaggle
                 x_qkv = rearrange(x_qkv, "n h w (t nh e) -> n (h w) t nh e", t=3, e=self.d_head)
                 x_qkv = scale_for_cosine_sim_qkv(x_qkv, self.x_scale, 1e-6)
                 x_theta = torch.stack((x_theta, x_theta, torch.zeros_like(x_theta)), dim=-3)
                 x_qkv = apply_rotary_emb_(x_qkv, x_theta)
                 x_q, x_k, x_v = x_qkv.chunk(3,dim=-3)
             else:
-                print("we couldnt run flash2, maybe it's not installed or the input si not bfloat16")
+                pass
                 exit(1)
         else:
             #x to q
             x_q = self.x_q_proj(x)
             pos = rearrange(pos, "... h w e -> ... (h w) e").to(x_q.dtype)
             x_theta = self.x_pos_emb(pos)
-            if use_flash_2(x_q):
+            if True: # Force SDPA for Kaggle
                 x_q = rearrange(x_q, "n h w (nh e) -> n (h w) nh e", e=self.d_head)
                 x_q = scale_for_cosine_sim_single(x_q, self.x_scale[:, None], 1e-6)
                 x_q=x_q.unsqueeze(2) #n (h w) 1 nh e
                 x_theta=x_theta.unsqueeze(1)
                 x_q = apply_rotary_emb_(x_q, x_theta)
             else:
-                print("we couldnt run flash2, maybe it's not installed or the input si not bfloat16")
+                pass
                 exit(1)
 
 
@@ -148,7 +149,7 @@ class SpatialTransformerSimpleV2(nn.Module):
         # print("cond_kv init",cond_kv.shape)
         context_pos = rearrange(context_pos, "... h w e -> ... (h w) e").to(cond_kv.dtype)
         cond_theta = self.cond_pos_emb(context_pos)
-        if use_flash_2(cond_kv):
+        if True: # Force SDPA for Kaggle
             cond_kv = rearrange(cond_kv, "n h w (t nh e) -> n (h w) t nh e", t=2, e=self.d_head)
             cond_k, cond_v = cond_kv.unbind(2) # makes each n (h w) nh e
             cond_k = scale_for_cosine_sim_single(cond_k, self.cond_scale[:, None], 1e-6)
@@ -157,7 +158,7 @@ class SpatialTransformerSimpleV2(nn.Module):
             cond_k = apply_rotary_emb_(cond_k, cond_theta)
             cond_k=cond_k.squeeze(2)
         else:
-            print("we couldnt run flash2, maybe it's not installed or the input si not bfloat16")
+            pass
             exit(1)
 
         #doing self attention by concating K and V between X and cond
@@ -177,7 +178,12 @@ class SpatialTransformerSimpleV2(nn.Module):
         # print("final q before giving to flash",q.shape)
         # print("final kv before giving to flash",kv.shape)
 
-        x = flash_attn.flash_attn_kvpacked_func(q, kv, softmax_scale=1.0)
+        # SDPA Fix
+        q_s = q.squeeze(2); k_s, v_s = kv.chunk(2, dim=2)
+        k_s, v_s = k_s.squeeze(2), v_s.squeeze(2)
+        q_t = q_s.transpose(1, 2); k_t, v_t = k_s.transpose(1, 2), v_s.transpose(1, 2)
+        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False, scale=1.0)
+        x = x.transpose(1, 2)
 
         x = rearrange(x, 'b (h w) nh e -> b (h w) (nh e)', nh=self.n_heads, e=self.d_head, h=h, w=w)
 
@@ -201,4 +207,3 @@ class SpatialTransformerSimpleV2(nn.Module):
 
         return x
             
-
