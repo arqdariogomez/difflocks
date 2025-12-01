@@ -21,5 +21,4 @@ accelerate
 pynput
 torchvision
 k-diffusion
-wget
 gradio==3.50.2
