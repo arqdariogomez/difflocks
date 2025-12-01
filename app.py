@@ -80,12 +80,12 @@ def predict(image, cfg_scale, export_obj):
             import numpy as np
             pos = strands.cpu().numpy()
             with open(out_obj, 'w') as f:
-                f.write("o Hair\\n")
+                f.write("o Hair\n")
                 v_off = 1
                 for s in pos:
-                    for p in s: f.write(f"v {p[0]} {p[1]} {p[2]}\\n")
+                    for p in s: f.write(f"v {p[0]} {p[1]} {p[2]}\n")
                     indices = range(v_off, v_off + len(s))
-                    f.write("l " + " ".join(map(str, indices)) + "\\n")
+                    f.write("l " + " ".join(map(str, indices)) + "\n")
                     v_off += len(s)
                     
         return str(out_npz), str(out_obj) if out_obj else None, "✅ Success!"

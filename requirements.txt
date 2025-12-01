@@ -20,3 +20,6 @@ diffusers
 accelerate
 pynput
 gradio>=4.0
+torchvision
+k-diffusion
+wget
