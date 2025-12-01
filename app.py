@@ -12,12 +12,18 @@ print("⏳ Initializing DiffLocks App...")
 
 try:
     from config import PATHS, PLATFORM
-    # IMPORTANTE: Importar sin try/except silencioso para ver el error real si falla
     from inference.img2hair import DiffLocksInference
 except Exception as e:
     print("❌ FATAL ERROR DURING IMPORT:")
     traceback.print_exc()
     raise e
+
+# --- FIX: Asegurar output dir antes de lanzar ---
+try:
+    PATHS.output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"✅ Output directory ready: {PATHS.output_dir}")
+except Exception as e:
+    print(f"⚠️ Warning: Could not create output dir: {e}")
 
 MODEL_INSTANCE = None
 
@@ -81,10 +87,11 @@ def predict(image, cfg_scale, export_obj):
         traceback.print_exc()
         return None, None, f"Error: {str(e)}"
 
-# UI
+# UI configuration
 with gr.Blocks(title="DiffLocks Studio", theme=gr.themes.Soft()) as app:
     gr.Markdown("# 💇‍♀️ DiffLocks Studio")
     gr.Markdown(f"Running on: **{PLATFORM.name}**")
+    
     with gr.Row():
         with gr.Column():
             input_img = gr.Image(type="pil", label="Input Image")
@@ -95,8 +102,9 @@ with gr.Blocks(title="DiffLocks Studio", theme=gr.themes.Soft()) as app:
             status = gr.Textbox(label="Status")
             file_npz = gr.File(label="NPZ Data")
             file_obj = gr.File(label="OBJ Model")
+            
     btn.click(predict, [input_img, cfg, chk_obj], [file_npz, file_obj, status])
 
 if __name__ == "__main__":
-    # Debug=True ayuda a ver errores en la consola y evita timeouts
-    app.launch(share=True, allowed_paths=[str(PATHS.output_dir)], debug=True)
+    # Settings para estabilidad en Kaggle
+    app.launch(share=True, allowed_paths=[str(PATHS.output_dir)], debug=True, inline=False)
