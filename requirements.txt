@@ -19,7 +19,7 @@ mediapipe
 diffusers
 accelerate
 pynput
-gradio>=4.0
 torchvision
 k-diffusion
 wget
+gradio==4.44.1
