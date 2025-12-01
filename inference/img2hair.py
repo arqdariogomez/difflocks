@@ -15,7 +15,9 @@ import mediapipe as mp
 import cv2
 
 DEFAULT_BODY_DATA_DIR = "data_loader/difflocks_bodydata/body_data"
-tbn_space_to_world = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float().cuda()
+
+# FIX: Definir tensor en CPU globalmente, mover a CUDA solo al usarlo
+tbn_space_to_world_cpu = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float()
 
 class Mediapipe:
     def __init__(self):
@@ -42,11 +44,13 @@ class DiffLocksInference():
         self.normalization_dict = DiffLocksDataset.get_normalization_data()
         self.scalp_trimesh, self.scalp_mesh_data = DiffLocksDataset.compute_scalp_data(
             os.path.join(DEFAULT_BODY_DATA_DIR, "scalp.ply"))
+        
+        # FIX: Mover tensor a CUDA aquí, asegurando que el contexto existe
+        self.tbn_space_to_world = tbn_space_to_world_cpu.cuda() if torch.cuda.is_available() else tbn_space_to_world_cpu
 
     def _clean(self, *objs):
         """Limpieza segura de memoria VRAM"""
         import gc
-        # Borramos referencias locales explícitamente
         for o in objs:
             del o
         gc.collect()
@@ -91,7 +95,7 @@ class DiffLocksInference():
             codec.eval()
             strands, _ = sample_strands_from_scalp_with_density(
                 scalp[:,0:-1], density, codec, self.normalization_dict, 
-                self.scalp_mesh_data, tbn_space_to_world, self.nr_chunks_decode_strands)
+                self.scalp_mesh_data, self.tbn_space_to_world, self.nr_chunks_decode_strands)
             self._clean(codec); codec=None
             
             if self.path_ckpt_rgb2material:
