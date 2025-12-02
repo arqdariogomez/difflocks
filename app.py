@@ -57,7 +57,7 @@ def load_model():
         str(diffusion[0]),
         str(rgb2mat) if rgb2mat.exists() else None,
         cfg_val=4.0,
-        nr_chunks_decode=200  # <--- FIX CLAVE: Más chunks = Menos memoria VRAM usada
+        nr_chunks_decode=150  # <--- FIX CLAVE: Más chunks = Menos memoria VRAM usada
     )
     print("✅ Model Loaded Successfully!")
     return MODEL_INSTANCE
