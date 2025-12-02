@@ -15,7 +15,6 @@ import cv2
 import gc
 
 DEFAULT_BODY_DATA_DIR = "data_loader/difflocks_bodydata"
-# Base en CPU, se mueve a GPU bajo demanda
 tbn_space_to_world_cpu = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float()
 
 def crop_face(image, face_landmarks, output_size=770, crop_size_multiplier=2.8):
@@ -64,12 +63,9 @@ class DiffLocksInference():
         scalp_path = os.path.join(DEFAULT_BODY_DATA_DIR, "scalp.ply")
         if not os.path.exists(scalp_path): scalp_path = "data_loader/difflocks_bodydata/scalp.ply"
         self.scalp_trimesh, self.scalp_mesh_data = DiffLocksDataset.compute_scalp_data(scalp_path)
-        
-        # CPU por defecto
         self.tbn_space_to_world = tbn_space_to_world_cpu
 
     def _clean(self, *objs):
-        """Libera memoria agresivamente moviendo a CPU antes de borrar"""
         for o in objs:
             if o is not None:
                 if hasattr(o, 'cpu'): 
@@ -85,8 +81,7 @@ class DiffLocksInference():
         if out_path: os.makedirs(out_path, exist_ok=True)
         dinov2=model=codec=rgb2mat=mats=None 
         try:
-            # 1. GEOMETRÍA & DINO (GPU)
-            print("   [1/4] Processing Geometry & Features...")
+            print("   [1/4] Processing Geometry...")
             frame = (rgb_img.permute(0,2,3,1).squeeze(0)*255).byte().cpu().numpy()
             _, lms = self.mediapipe_img.run(frame)
             if not lms: return None, None
@@ -98,14 +93,10 @@ class DiffLocksInference():
             tf = T.Compose([T.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225))])
             with torch.no_grad(): out = dinov2.forward_features(tf(rgb_img))
             patch, cls_tok = out["x_norm_patchtokens"].clone(), out["x_norm_clstoken"].clone()
-            
-            # Guardamos latents en CPU temporalmente
-            patch_emb = patch.reshape(patch.shape[0], int(patch.shape[1]**0.5), int(patch.shape[1]**0.5), -1).permute(0, 3, 1, 2).contiguous().cpu()
-            cls_tok = cls_tok.cpu()
-            
-            self._clean(dinov2); dinov2=None 
+            h = w = int(patch.shape[1]**0.5)
+            patch_emb = patch.reshape(patch.shape[0], h, w, -1).permute(0, 3, 1, 2).contiguous()
+            self._clean(dinov2); dinov2=None
 
-            # 2. DIFUSIÓN (GPU)
             print("   [2/4] Diffusion (FP32)...")
             conf = K.config.load_config(self.path_config_difflocks)
             model = K.config.make_denoiser_wrapper(conf)(K.config.make_model(conf).cuda())
@@ -113,42 +104,37 @@ class DiffLocksInference():
             model.inner_model.load_state_dict(ckpt['model_ema'])
             del ckpt; model.eval(); model.inner_model.condition_dropout_rate = 0.0
             
-            # Subimos latents a GPU
-            extra = {'latents_dict': {"dinov2": {"cls_token": cls_tok.cuda(), "final_latent": patch_emb.cuda()}}}
-            
+            extra = {'latents_dict': {"dinov2": {"cls_token": cls_tok, "final_latent": patch_emb}}}
             scalp = sample_images_cfg(1, self.cfg_val, [-1., 10000.], model, conf['model'], self.nr_iters_denoise, extra)
             
-            # >>> RELEVO DE GPU: Guardar resultado en CPU y BORRAR modelo <<<
-            print("   [INFO] VRAM Swap: Killing Diffusion Model to free space...")
-            scalp_cpu = scalp.cpu() 
+            # --- PREPARACIÓN CPU SAFE (FIX OOM) ---
+            print("   [INFO] Transferring to CPU for Decoding...")
+            scalp_cpu = scalp.cpu() # Bajamos resultado a RAM
             
-            self._clean(model); model=None # Vaciamos VRAM (~6GB liberados)
-            del extra
-            torch.cuda.empty_cache()
+            # Limpiamos GPU
+            self._clean(model); model=None 
             
             density = (scalp_cpu[:,-1:]*(0.5/conf['model']["sigma_data"])+0.5).clamp(0,1)
             density[density<0.02] = 0.0
+            
+            # Mover diccionarios auxiliares a CPU (VITAL para evitar error de dispositivos mixtos)
+            norm_dict_cpu = {k: v.cpu() if torch.is_tensor(v) else v for k, v in self.normalization_dict.items()}
+            mesh_data_cpu = {k: v.cpu() if torch.is_tensor(v) else v for k, v in self.scalp_mesh_data.items()}
 
-            # 3. DECODING (GPU)
-            print("   [3/4] Decoding (GPU with fresh VRAM)...")
-            # Cargar Codec en GPU (Ahora cabe porque no está el modelo de difusión)
-            codec = StrandCodec(do_vae=False, decode_type="dir", nr_verts_per_strand=256).cuda()
-            codec.load_state_dict(torch.load(self.path_ckpt_strandcodec))
+            print("   [3/4] Decoding (CPU Mode)...")
+            # Cargar Codec en CPU
+            codec = StrandCodec(do_vae=False, decode_type="dir", nr_verts_per_strand=256).cpu()
+            codec.load_state_dict(torch.load(self.path_ckpt_strandcodec, map_location='cpu'))
             codec.eval()
             
-            # Preparar datos auxiliares en GPU
-            norm_dict_gpu = {k: v.cuda() if torch.is_tensor(v) else v for k, v in self.normalization_dict.items()}
-            mesh_data_gpu = {k: v.cuda() if torch.is_tensor(v) else v for k, v in self.scalp_mesh_data.items()}
-            tbn_gpu = self.tbn_space_to_world.cuda()
-            
-            # Ejecutar decoding en GPU
+            # Ejecutar en CPU (Ahora funcionará porque parchamos strand_codec y strand_util)
             strands, _ = sample_strands_from_scalp_with_density(
-                scalp_cpu[:,0:-1].cuda(), density.cuda(), codec, norm_dict_gpu, 
-                mesh_data_gpu, tbn_gpu, self.nr_chunks_decode_strands)
+                scalp_cpu[:,0:-1], density, codec, norm_dict_cpu, 
+                mesh_data_cpu, self.tbn_space_to_world.cpu(), self.nr_chunks_decode_strands)
             
             self._clean(codec); codec=None
             
-            # 4. MATERIALES (GPU)
+            # 4. Materiales (En GPU si es posible)
             if self.path_ckpt_rgb2material:
                 try:
                     rgb2mat = RGB2MaterialModel(1024, 11, 64).cuda()
@@ -156,7 +142,7 @@ class DiffLocksInference():
                     rgb2mat.eval()
                     with torch.no_grad(): mats = rgb2mat({"dinov2_latents": patch_emb.cuda()})
                 except Exception as e:
-                    print(f"Warning: Materials failed, skipping: {e}")
+                    print(f"Warning: Materials error: {e}")
                 finally:
                     self._clean(rgb2mat)
 
