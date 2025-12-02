@@ -37,7 +37,7 @@ def closest_point_barycentrics(query_points, mesh_verts, mesh_faces):
     face_v1 = mesh_verts[vertex_idxs[:, 1]]
     face_v2 = mesh_verts[vertex_idxs[:, 2]]
 
-    barys = igl.barycentric_coordinates_tri(closest_points, face_v0, face_v1, face_v2)
+    barys = igl.barycentric_coordinates(closest_points, face_v0, face_v1, face_v2)
 
     # #sanity check
     # b0, b1, b2 = np.split(barys, 3, axis=1)
