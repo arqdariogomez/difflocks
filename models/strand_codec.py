@@ -289,8 +289,8 @@ class StrandGeneratorSiren(nn.Module):
 
         #compute here a lot of the cuda stuff so we don't need to perform cpu-cuda transfers during the forward pass
         # sampling t
-        self.t = torch.linspace(-1, 1, nr_verts_to_create).cuda() #between -1 and 1 because siren usually expects normalized input
-        self.start_positions = torch.zeros(1, 1, 3).cuda()
+        self.t = torch.linspace(-1, 1, nr_verts_to_create) #between -1 and 1 because siren usually expects normalized input
+        self.start_positions = torch.zeros(1, 1, 3)
 
 
     def forward(self, strand_features, hyperparams, normalization_dict):
@@ -343,7 +343,7 @@ class StrandGeneratorSiren(nn.Module):
             if self.decode_random_verts:
                 pred_strands = points_pos
             else:
-                # start_positions = torch.zeros(nr_strands, 1, 3).cuda()
+                # start_positions = torch.zeros(nr_strands, 1, 3)
                 start_positions = self.start_positions.repeat(nr_strands,1,1)
                 pred_strands = torch.cat([start_positions, points_pos], 1)
                 #positions are normalized to be in unit gaussian so we denormalize them to be in real space
@@ -362,7 +362,7 @@ class StrandGeneratorSiren(nn.Module):
             #predict pos 
             pred_strands = torch.cumsum(hair_dir, dim=1) # nr_strands, nr_verts-1, 3
             # we know that the first vertex is 0,0,0 so we just concatenate that one
-            # start_positions = torch.zeros(nr_strands, 1, 3).cuda()
+            # start_positions = torch.zeros(nr_strands, 1, 3)
             start_positions = self.start_positions.repeat(nr_strands,1,1)
             pred_strands = torch.cat([start_positions, pred_strands], 1)
 
