@@ -3,7 +3,7 @@ import os
 
 # --- FIX MEMORIA: Configuración vital para GPUs T4 (16GB) ---
 # Esto ayuda a que PyTorch no se bloquee cuando la memoria está fragmentada
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.8,max_split_size_mb:128"
 
 import gradio as gr
 from pathlib import Path

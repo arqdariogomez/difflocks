@@ -12,55 +12,29 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import mediapipe as mp
 import cv2
+import gc
 
-# Rutas
 DEFAULT_BODY_DATA_DIR = "data_loader/difflocks_bodydata"
 tbn_space_to_world_cpu = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float()
 
-# --- FUNCIÓN ORIGINAL DEL REPO (Restaurada) ---
 def crop_face(image, face_landmarks, output_size=770, crop_size_multiplier=2.8):
-    """
-    Función nativa del repositorio oficial.
-    Recorta la cara basándose en landmarks.
-    """
-    # ... (Lógica original de Meshcapade) ...
     h, w, _ = image.shape
-    xs = [l.x for l in face_landmarks]
-    ys = [l.y for l in face_landmarks]
-    
+    xs = [l.x for l in face_landmarks]; ys = [l.y for l in face_landmarks]
     min_x, max_x = min(xs) * w, max(xs) * w
     min_y, max_y = min(ys) * h, max(ys) * h
-    
     cx, cy = (min_x + max_x) / 2, (min_y + max_y) / 2
     face_w, face_h = max_x - min_x, max_y - min_y
-    
-    # El multiplier original usa lógica basada en el tamaño máximo
-    size = max(face_w, face_h) * 1.5 # Ajustado para estabilidad
-    
-    x1 = int(cx - size / 2)
-    y1 = int(cy - size / 2)
-    x2 = int(cx + size / 2)
-    y2 = int(cy + size / 2)
-    
-    # Padding seguro
-    pad_l = max(0, -x1)
-    pad_t = max(0, -y1)
-    pad_r = max(0, x2 - w)
-    pad_b = max(0, y2 - h)
-    
+    size = max(face_w, face_h) * 1.5
+    x1 = int(cx - size / 2); y1 = int(cy - size / 2)
+    x2 = int(cx + size / 2); y2 = int(cy + size / 2)
+    pad_l = max(0, -x1); pad_t = max(0, -y1)
+    pad_r = max(0, x2 - w); pad_b = max(0, y2 - h)
     if any([pad_l, pad_t, pad_r, pad_b]):
         image = np.pad(image, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), mode='constant')
-        x1 += pad_l
-        y1 += pad_t
-        x2 += pad_l
-        y2 += pad_t
-        
+        x1 += pad_l; y1 += pad_t; x2 += pad_l; y2 += pad_t
     crop = image[y1:y2, x1:x2]
-    try:
-        return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_CUBIC)
-    except:
-        return cv2.resize(image, (output_size, output_size))
-
+    try: return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_CUBIC)
+    except: return cv2.resize(image, (output_size, output_size))
 
 class Mediapipe:
     def __init__(self):
@@ -86,32 +60,35 @@ class DiffLocksInference():
         self.mediapipe_img = Mediapipe()
         self.normalization_dict = DiffLocksDataset.get_normalization_data()
         
-        # Búsqueda de scalp.ply
         scalp_path = os.path.join(DEFAULT_BODY_DATA_DIR, "scalp.ply")
-        if not os.path.exists(scalp_path):
-             scalp_path = "data_loader/difflocks_bodydata/scalp.ply"
-             
+        if not os.path.exists(scalp_path): scalp_path = "data_loader/difflocks_bodydata/scalp.ply"
         self.scalp_trimesh, self.scalp_mesh_data = DiffLocksDataset.compute_scalp_data(scalp_path)
         self.tbn_space_to_world = tbn_space_to_world_cpu.cuda() if torch.cuda.is_available() else tbn_space_to_world_cpu
 
     def _clean(self, *objs):
-        import gc
-        for o in objs: del o
+        """Limpieza segura de memoria VRAM"""
+        for o in objs:
+            if o is not None:
+                if hasattr(o, 'cpu'):
+                    try: o.cpu()
+                    except: pass
+                del o
         gc.collect()
-        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
     def rgb2hair(self, rgb_img, out_path=None):
         if out_path: os.makedirs(out_path, exist_ok=True)
-        dinov2=model=codec=rgb2mat=None
+        # FIX CLAUDE: Inicializar mats=None explícitamente para evitar UnboundLocalError
+        dinov2=model=codec=rgb2mat=mats=None 
         try:
             print("   [1/4] Processing Geometry...")
             frame = (rgb_img.permute(0,2,3,1).squeeze(0)*255).byte().cpu().numpy()
             _, lms = self.mediapipe_img.run(frame)
             if not lms: return None, None
             
-            # USO DE FUNCIÓN INTERNA (Correcto)
             cropped_face = crop_face(frame, lms, 770)
-            
             rgb_img = torch.tensor(cropped_face).cuda().permute(2,0,1).unsqueeze(0).float()/255.0
             
             dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_reg', verbose=False).cuda()
@@ -131,6 +108,9 @@ class DiffLocksInference():
             
             extra = {'latents_dict': {"dinov2": {"cls_token": cls_tok, "final_latent": patch_emb}}}
             scalp = sample_images_cfg(1, self.cfg_val, [-1., 10000.], model, conf['model'], self.nr_iters_denoise, extra)
+            
+            # FIX CLAUDE: Sincronización explícita ANTES de limpiar
+            torch.cuda.synchronize()
             self._clean(model); model=None
             
             density = (scalp[:,-1:]*(0.5/conf['model']["sigma_data"])+0.5).clamp(0,1)
