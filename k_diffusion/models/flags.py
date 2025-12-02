@@ -1,15 +1,17 @@
 import os
 import torch
 
-# --- CONFIGURACIÓN DE COMPILACIÓN (FIX T4 CRASH) ---
-# Desactivamos torch.compile porque causa "INTERNAL ASSERT FAILED" en T4
+# --- CONFIGURACIÓN DE COMPILACIÓN ---
+# Desactivado para estabilidad en T4
+use_compile = False
+
+def get_use_compile():
+    return use_compile
+
 def compile_wrap(function):
     return function
 
-use_compile = False
-
-# --- FLAGS DE CHECKPOINTING (RESTAURADOS) ---
-# Estas funciones son requeridas por models/__init__.py
+# --- CONFIGURACIÓN DE CHECKPOINTING ---
 _checkpointing = False
 
 def checkpointing(enable=True):
