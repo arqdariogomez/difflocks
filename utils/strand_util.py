@@ -350,14 +350,14 @@ def cubic_spline_coeffs(t, x):
 
 
 def diff_spline(hair_data_dict, nr_verts_per_strand=256):
-    points = hair_data_dict["points"]
-    times = hair_data_dict["times"]
+    points = hair_data_dict["points"].cuda()
+    times = hair_data_dict["times"].cuda()
     # print(points.shape[:])
     # print('p:',points[0])
     # print('t:',times)
     coeffs = natural_cubic_spline_coeffs(times, points)
     spline = NaturalCubicSpline(coeffs)
-    time_pts = torch.arange(nr_verts_per_strand) / (nr_verts_per_strand - 1)
+    time_pts = torch.arange(nr_verts_per_strand).cuda() / (nr_verts_per_strand - 1)
     # print(time_pts)
     time_pts = time_pts.repeat(points.shape[0], 1)
 
@@ -370,7 +370,7 @@ def diff_spline(hair_data_dict, nr_verts_per_strand=256):
 #assumes the input is (Batch,Time,dim) or (Batch,Time)
 #return (B,Freq,T,dim) containing real and imaginary values
 def compute_stft(input, fft_size, hop_size, win_length, window_type="hann_window"):
-    window = get_window(window_type, win_length)
+    window = get_window(window_type, win_length).cuda()
 
     if len(input.shape)==2:
         #we have a (B,T) input so we can just run stft
@@ -406,7 +406,7 @@ def compute_stft(input, fft_size, hop_size, win_length, window_type="hann_window
 
 #inverse of compute_stft
 def compute_istft(input, fft_size, hop_size, win_length, window_type="hann_window", spatial_size=256):
-    window = get_window(window_type, win_length)
+    window = get_window(window_type, win_length).cuda()
 
     #if the input if 5 dimensional and the last dimension 2, then we view it as complex
     if len(input.shape)==5 and input.shape[-1]==2:
@@ -595,7 +595,7 @@ def sample_strands_from_scalp_with_density(scalp_texture, density_map, strand_co
     new_strands_rand_uv11_pt = torch.cat([new_strands_rand_uv11[:, 1:2], new_strands_rand_uv11[:, 0:1]],
                                          1)  # swap xy because torch expects to be HW so yx
     new_strands_density = torch.nn.functional.grid_sample(density_clamped,
-                                                          new_strands_rand_uv11_pt.view(1, 1, -1, 2))
+                                                          new_strands_rand_uv11_pt.view(1, 1, -1, 2)).cuda()
     new_strands_density = new_strands_density.permute(0, 2, 3, 1).view(-1, 1)  # Make N,1
     is_new_strand_valid = rand_map < new_strands_density
     # print("is_new_strand_valid", is_new_strand_valid.shape)
