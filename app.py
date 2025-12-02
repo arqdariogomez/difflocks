@@ -1,9 +1,15 @@
 import sys
 import os
+
+# --- FIX MEMORIA: Configuración vital para GPUs T4 (16GB) ---
+# Esto ayuda a que PyTorch no se bloquee cuando la memoria está fragmentada
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
+
 import gradio as gr
 from pathlib import Path
 import torch
 import traceback
+import gc
 
 # Setup Paths
 sys.path.insert(0, os.getcwd())
@@ -18,7 +24,6 @@ except Exception as e:
     traceback.print_exc()
     raise e
 
-# --- FIX: Asegurar output dir antes de lanzar ---
 try:
     PATHS.output_dir.mkdir(parents=True, exist_ok=True)
     print(f"✅ Output directory ready: {PATHS.output_dir}")
@@ -41,13 +46,18 @@ def load_model():
     
     if not diffusion:
         raise FileNotFoundError(f"Diffusion checkpoint not found in {ckpt_root}")
-        
+    
+    # Limpieza preventiva antes de cargar
+    gc.collect()
+    torch.cuda.empty_cache()
+    
     MODEL_INSTANCE = DiffLocksInference(
         str(strand_codec),
         str(config_path),
         str(diffusion[0]),
         str(rgb2mat) if rgb2mat.exists() else None,
-        cfg_val=4.0
+        cfg_val=4.0,
+        nr_chunks_decode=200  # <--- FIX CLAVE: Más chunks = Menos memoria VRAM usada
     )
     print("✅ Model Loaded Successfully!")
     return MODEL_INSTANCE
@@ -56,6 +66,11 @@ def predict(image, cfg_scale, export_obj):
     if image is None: return None, None, "Please upload an image"
     try:
         PATHS.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Limpieza agresiva antes de inferencia
+        gc.collect()
+        torch.cuda.empty_cache()
+        
         model = load_model()
         model.cfg_val = float(cfg_scale)
         
@@ -71,6 +86,7 @@ def predict(image, cfg_scale, export_obj):
         
         if export_obj:
             out_obj = PATHS.output_dir / "hair.obj"
+            # Procesar OBJ con cuidado de memoria (NumPy usa CPU, es seguro)
             pos = strands.cpu().numpy()
             with open(out_obj, 'w') as f:
                 f.write("o Hair\n")
@@ -85,9 +101,12 @@ def predict(image, cfg_scale, export_obj):
         
     except Exception as e:
         traceback.print_exc()
+        # Intentar liberar memoria si falló
+        gc.collect()
+        torch.cuda.empty_cache()
         return None, None, f"Error: {str(e)}"
 
-# UI configuration
+# UI
 with gr.Blocks(title="DiffLocks Studio", theme=gr.themes.Soft()) as app:
     gr.Markdown("# 💇‍♀️ DiffLocks Studio")
     gr.Markdown(f"Running on: **{PLATFORM.name}**")
@@ -106,5 +125,4 @@ with gr.Blocks(title="DiffLocks Studio", theme=gr.themes.Soft()) as app:
     btn.click(predict, [input_img, cfg, chk_obj], [file_npz, file_obj, status])
 
 if __name__ == "__main__":
-    # Settings para estabilidad en Kaggle
     app.launch(share=True, allowed_paths=[str(PATHS.output_dir)], debug=True, inline=False)
