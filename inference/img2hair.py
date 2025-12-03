@@ -23,25 +23,19 @@ from mediapipe.tasks.python import vision
 DEFAULT_BODY_DATA_DIR = "data_loader/difflocks_bodydata"
 tbn_space_to_world_cpu = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float()
 
-# Configuración CPU
+# Configuración CPU threads
 torch.set_num_threads(4)
 
-# ------------------------------------------------------------------------------
-# MOTOR GEOMÉTRICO (INYECCIÓN LOCAL SANITIZADA)
-# ------------------------------------------------------------------------------
+# --- FUNCIONES AUXILIARES (TBN & GEOMETRÍA) ---
 
 def interpolate_tbn(barys, vertex_idxs, v_tangents, v_bitangents, v_normals):
-    """
-    Interpolación baricéntrica (Numpy puro).
-    Calcula tangentes, bitangentes y normales en puntos arbitrarios de la malla.
-    """
+    """Interpolación baricéntrica (Numpy puro)."""
     nr_positions = barys.shape[0]
-
+    
     # Tangents
     sampled_tangents = v_tangents[vertex_idxs.reshape(-1),:].reshape(nr_positions,3,3)
     weighted_tangents = sampled_tangents * barys.reshape(nr_positions,3,1)
     point_tangents = weighted_tangents.sum(axis=1)
-    # Normalize (Safe division)
     norm = np.linalg.norm(point_tangents, axis=-1, keepdims=True)
     point_tangents = point_tangents / (norm + 1e-8)
 
@@ -52,7 +46,7 @@ def interpolate_tbn(barys, vertex_idxs, v_tangents, v_bitangents, v_normals):
     norm = np.linalg.norm(point_normals, axis=-1, keepdims=True)
     point_normals = point_normals / (norm + 1e-8)
 
-    # Bitangents (Cross product)
+    # Bitangents
     point_bitangents = np.cross(point_normals, point_tangents)
     norm = np.linalg.norm(point_bitangents, axis=-1, keepdims=True)
     point_bitangents = point_bitangents / (norm + 1e-8)
@@ -65,15 +59,10 @@ def interpolate_tbn(barys, vertex_idxs, v_tangents, v_bitangents, v_normals):
     return point_tangents, point_bitangents, point_normals
 
 def tbn_space_to_world_cpu_safe(root_uv, strands_positions, scalp_mesh_data):
-    """
-    Versión CPU-SAFE de tbn_space_to_world.
-    Garantiza float32 y ejecución en el dispositivo del input (CPU).
-    """
-    # 0. Configuración de Dispositivo y Tipo
+    """Versión CPU-SAFE de tbn_space_to_world."""
     target_device = strands_positions.device
-    target_dtype = torch.float32 # Forzar float32 para evitar discrepancias
+    target_dtype = torch.float32 
 
-    # 1. Extraer mapas (Numpy arrays)
     scalp_index_map = scalp_mesh_data["index_map"]
     scalp_vertex_idxs_map = scalp_mesh_data["vertex_idxs_map"]
     scalp_bary_map = scalp_mesh_data["bary_map"]
@@ -82,66 +71,41 @@ def tbn_space_to_world_cpu_safe(root_uv, strands_positions, scalp_mesh_data):
     mesh_v_normals = scalp_mesh_data["v_normals"]
     scalp_v = scalp_mesh_data["verts"]
     
-    # 2. Calcular índices de píxeles
     tex_size = scalp_vertex_idxs_map.shape[0]
     
-    # Si root_uv es tensor, asegurar CPU para calculo de índices
     root_uv_np = root_uv.cpu().numpy() if torch.is_tensor(root_uv) else root_uv
     pixel_indices = np.floor(root_uv_np * tex_size).astype(int)
-    
-    # Clamp para evitar out of bounds por errores de punto flotante
     pixel_indices = np.clip(pixel_indices, 0, tex_size - 1)
 
-    # 3. Sampling de mapas
-    # face_idxs = scalp_index_map[pixel_indices[:, 0], pixel_indices[:, 1]] # No se usa en esta versión
     vertex_idxs = scalp_vertex_idxs_map[pixel_indices[:, 0], pixel_indices[:, 1], :]
     barys = scalp_bary_map[pixel_indices[:, 0], pixel_indices[:, 1], :]
 
-    # 4. Interpolación Geométrica (Numpy)
     root_tangent, root_bitangent, root_normal = interpolate_tbn(
         barys, vertex_idxs, mesh_v_tangents, mesh_v_bitangents, mesh_v_normals
     )
     
-    # 5. Construir Matriz TBN (Stacking)
     strands_tbn_np = np.stack((root_tangent, root_bitangent, root_normal), axis=2)
-    
-    # 6. Conversión a Tensor (CRÍTICO: Usar as_tensor y forzar dtype/device)
     strands_tbn = torch.as_tensor(strands_tbn_np, device=target_device, dtype=target_dtype)
     
-    # Swap B and N (Indices: 0, 2, 1) -> T, N, B
     indices_tbn = torch.tensor([0, 2, 1], device=target_device, dtype=torch.long)
     strands_tbn = torch.index_select(strands_tbn, 2, indices_tbn)
-    
-    # Invertir X (Tangent)
     strands_tbn[..., 0] = -strands_tbn[..., 0]
 
-    # 7. Cambio de base (Rotación)
-    # strands_tbn: [N, 3, 3], strands_positions: [N, Verts, 3] -> Permute [N, 3, Verts]
-    # Matmul: [N, 3, 3] x [N, 3, Verts] -> [N, 3, Verts] -> Permute back [N, Verts, 3]
     orig_points = torch.matmul(strands_tbn, strands_positions.permute(0, 2, 1)).permute(0, 2, 1)
 
-    # 8. Calcular Posición de Raíces
     nr_positions = vertex_idxs.shape[0]
-    
-    # Samplear vértices del mesh (Numpy -> Tensor)
     sampled_v_np = scalp_v[vertex_idxs.reshape(-1), :].reshape(nr_positions, 3, 3)
     sampled_v = torch.as_tensor(sampled_v_np, device=target_device, dtype=target_dtype)
-    
     barys_tensor = torch.as_tensor(barys, device=target_device, dtype=target_dtype)
     
-    # Interpolación de posición
     weighted_v = sampled_v * barys_tensor.reshape(nr_positions, 3, 1)
     roots_positions = weighted_v.sum(dim=1)
-
-    # 9. Sumar Posición Raíz a Puntos Rotados
-    # roots_positions: [N, 3] -> [N, 1, 3] para broadcasting
     strds_points = orig_points + roots_positions[:, None, :]
     
     return strds_points
 
-# ------------------------------------------------------------------------------
-# UTILIDADES GENERALES
-# ------------------------------------------------------------------------------
+# --- UTILIDADES DE MEMORIA Y CROP ---
+
 def get_memory_info():
     try:
         ram = psutil.virtual_memory()
@@ -179,9 +143,7 @@ def crop_face(image, face_landmarks, output_size=770):
     try: return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_CUBIC)
     except: return cv2.resize(image, (output_size, output_size))
 
-# ------------------------------------------------------------------------------
-# CLASE MEDIAPIPE
-# ------------------------------------------------------------------------------
+# --- CLASE MEDIAPIPE ---
 class Mediapipe:
     def __init__(self):
         asset_path = 'inference/assets/face_landmarker_v2_with_blendshapes.task'
@@ -195,9 +157,7 @@ class Mediapipe:
         res = self.detector.detect(mp_image)
         return (res.face_blendshapes[0], res.face_landmarks[0]) if res.face_landmarks else (None, None)
 
-# ------------------------------------------------------------------------------
-# CLASE PRINCIPAL
-# ------------------------------------------------------------------------------
+# --- CLASE PRINCIPAL ---
 class DiffLocksInference():
     def __init__(self, path_ckpt_strandcodec, path_config_difflocks, path_ckpt_difflocks,
                  path_ckpt_rgb2material=None, cfg_val=1.0, nr_iters_denoise=100, nr_chunks_decode=150):
@@ -222,15 +182,18 @@ class DiffLocksInference():
         # CPU Cache
         self.norm_dict_cpu = {k: v.cpu() if torch.is_tensor(v) else v for k, v in self.normalization_dict.items()}
         self.mesh_data_cpu = {k: v.cpu() if torch.is_tensor(v) else v for k, v in self.scalp_mesh_data.items()}
-        
-        # USAMOS NUESTRA VERSIÓN SEGURA LOCAL
         self.tbn_space_to_world = tbn_space_to_world_cpu_safe
 
     @torch.inference_mode()
-    def rgb2hair(self, rgb_img, out_path=None):
+    # NUEVO: cfg_val opcional
+    def rgb2hair(self, rgb_img, out_path=None, cfg_val=None):
         if out_path: os.makedirs(out_path, exist_ok=True)
         log_memory("Inicio Inferencia")
         
+        # Lógica de prioridad: Si pasaron un cfg_val, úsalo. Si no, usa el del init.
+        current_cfg = cfg_val if cfg_val is not None else self.cfg_val
+        print(f"   [INFO] Usando CFG Scale: {current_cfg}")
+
         try:
             # 1. FACE
             print("   [1/4] Processing Geometry...")
@@ -276,7 +239,9 @@ class DiffLocksInference():
             model.inner_model.condition_dropout_rate = 0.0
             
             extra = {'latents_dict': {"dinov2": {"cls_token": cls_tok_cpu.cuda(), "final_latent": patch_emb_cpu.cuda()}}}
-            scalp = sample_images_cfg(1, self.cfg_val, [-1., 10000.], model, conf['model'], self.nr_iters_denoise, extra)
+            
+            # USAMOS current_cfg AQUÍ
+            scalp = sample_images_cfg(1, current_cfg, [-1., 10000.], model, conf['model'], self.nr_iters_denoise, extra)
             
             scalp_cpu = scalp.cpu().clone()
             sigma_data = conf['model']["sigma_data"]
@@ -296,7 +261,6 @@ class DiffLocksInference():
             
             print(f"   [INFO] Chunks: {self.nr_chunks_decode_strands} | Verts: 256")
             
-            # Call to util using our LOCAL SAFE function
             strands, _ = sample_strands_from_scalp_with_density(
                 scalp_cpu[:,0:-1], density, codec, self.norm_dict_cpu, 
                 self.mesh_data_cpu, self.tbn_space_to_world, 
@@ -324,8 +288,9 @@ class DiffLocksInference():
         finally:
             force_cleanup()
 
-    def file2hair(self, fpath, out):
+    # NUEVO: Pasar cfg_val hacia abajo
+    def file2hair(self, fpath, out, cfg_val=None):
         img = cv2.imread(fpath)
         if img is None: raise FileNotFoundError(f"{fpath}")
         rgb = torch.tensor(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).cuda().permute(2,0,1).unsqueeze(0).float()/255.
-        return self.rgb2hair(rgb, out)
+        return self.rgb2hair(rgb, out, cfg_val=cfg_val)
