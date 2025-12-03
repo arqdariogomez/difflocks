@@ -1,95 +1,53 @@
-import sys
-import os
-
-# --- FIX MEMORIA: Configuración vital para GPUs T4 (16GB) ---
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.8,max_split_size_mb:128"
-
-import gradio as gr
+import sys, os, gradio as gr, torch, traceback, gc
 from pathlib import Path
-import torch
-import traceback
-import gc
-
-# Setup Paths
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.8,max_split_size_mb:128"
 sys.path.insert(0, os.getcwd())
-
-print("⏳ Initializing DiffLocks App...")
 
 try:
     from config import PATHS, PLATFORM
     from inference.img2hair import DiffLocksInference
-except Exception as e:
-    print("❌ FATAL ERROR DURING IMPORT:")
-    traceback.print_exc()
-    raise e
-
-try:
     PATHS.output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"✅ Output directory ready: {PATHS.output_dir}")
 except Exception as e:
-    print(f"⚠️ Warning: Could not create output dir: {e}")
+    traceback.print_exc(); raise e
 
 MODEL_INSTANCE = None
 
 def load_model():
     global MODEL_INSTANCE
-    if MODEL_INSTANCE is not None:
-        return MODEL_INSTANCE
-    
-    print("⏳ Loading Model Checkpoints...")
+    if MODEL_INSTANCE: return MODEL_INSTANCE
+    print("⏳ Loading Model...")
     ckpt_root = PATHS.models_dir
     strand_codec = ckpt_root / "strand_vae/strand_codec.pt"
     diffusion = list(ckpt_root.glob("difflocks_diffusion/*.pth"))
     rgb2mat = ckpt_root / "rgb2material/rgb2material.pt"
     config_path = Path("configs/config_scalp_texture_conditional.json")
-    
-    if not diffusion:
-        raise FileNotFoundError(f"Diffusion checkpoint not found in {ckpt_root}")
-    
-    gc.collect()
-    torch.cuda.empty_cache()
-    
+    gc.collect(); torch.cuda.empty_cache()
     MODEL_INSTANCE = DiffLocksInference(
-        str(strand_codec),
-        str(config_path),
-        str(diffusion[0]),
-        str(rgb2mat) if rgb2mat.exists() else None,
-        cfg_val=4.0, 
-        nr_chunks_decode=150
+        str(strand_codec), str(config_path), str(diffusion[0]),
+        str(rgb2mat) if rgb2mat.exists() else None, cfg_val=4.0, nr_chunks_decode=150
     )
-    print("✅ Model Loaded Successfully!")
     return MODEL_INSTANCE
 
 def predict(image, cfg_scale, export_obj):
-    if image is None: return None, None, "Please upload an image"
+    if image is None: return None, None, "⚠️ Please upload an image"
     try:
-        PATHS.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        gc.collect()
-        torch.cuda.empty_cache()
-        
+        gc.collect(); torch.cuda.empty_cache()
         model = load_model()
         
         in_path = PATHS.output_dir / "input_temp.png"
         image.save(in_path)
         
-        # FIX: Pasamos el CFG dinámicamente
-        print(f"🔄 Llamando a inferencia con CFG: {float(cfg_scale)}")
-        strands, mats = model.file2hair(
-            str(in_path), 
-            str(PATHS.output_dir), 
-            cfg_val=float(cfg_scale)
-        )
+        print(f"🔄 UI Request: CFG={cfg_scale}")
+        strands, _ = model.file2hair(str(in_path), str(PATHS.output_dir), cfg_val=float(cfg_scale))
         
-        if strands is None: return None, None, "Inference returned None (Face not detected?)"
-            
-        out_npz = PATHS.output_dir / "difflocks_output_strands.npz"
+        if strands is None: return None, None, "❌ Face not detected"
+        
+        out_npz = str(PATHS.output_dir / "difflocks_output_strands.npz")
         out_obj = None
-        
         if export_obj:
-            out_obj = PATHS.output_dir / "hair.obj"
+            out_obj_path = PATHS.output_dir / "hair.obj"
             pos = strands.cpu().numpy()
-            with open(out_obj, 'w') as f:
+            with open(out_obj_path, 'w') as f:
                 f.write("o Hair\n")
                 v_off = 1
                 for s in pos:
@@ -97,24 +55,20 @@ def predict(image, cfg_scale, export_obj):
                     indices = range(v_off, v_off + len(s))
                     f.write("l " + " ".join(map(str, indices)) + "\n")
                     v_off += len(s)
-                    
-        return str(out_npz), str(out_obj) if out_obj else None, "Success!"
+            out_obj = str(out_obj_path)
+            
+        return out_npz, out_obj, "✅ Success! Download files below."
         
     except Exception as e:
         traceback.print_exc()
-        gc.collect()
-        torch.cuda.empty_cache()
         return None, None, f"Error: {str(e)}"
 
-# UI
 with gr.Blocks(title="DiffLocks Studio", theme=gr.themes.Soft()) as app:
     gr.Markdown("# 💇‍♀️ DiffLocks Studio")
-    gr.Markdown(f"Running on: **{PLATFORM.name}**")
-    
     with gr.Row():
         with gr.Column():
             input_img = gr.Image(type="pil", label="Input Image")
-            cfg = gr.Slider(1.5, 7.5, value=4.0, label="CFG Scale")
+            cfg = gr.Slider(1.5, 7.5, value=4.0, step=0.1, label="CFG Scale (Fidelity)")
             chk_obj = gr.Checkbox(value=True, label="Export OBJ")
             btn = gr.Button("Generate", variant="primary")
         with gr.Column():
@@ -125,4 +79,6 @@ with gr.Blocks(title="DiffLocks Studio", theme=gr.themes.Soft()) as app:
     btn.click(predict, [input_img, cfg, chk_obj], [file_npz, file_obj, status])
 
 if __name__ == "__main__":
+    # --- FIX TIMEOUT: ACTIVAMOS QUEUE ---
+    app.queue(max_size=5) 
     app.launch(share=True, allowed_paths=[str(PATHS.output_dir)], debug=True, inline=False)
