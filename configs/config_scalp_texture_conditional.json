@@ -28,9 +28,20 @@
             6144
         ],
         "self_attns": [
-            0,
-            1,
-            1
+            {
+                "type": "neighborhood",
+                "d_head": 64,
+                "kernel_size": 7
+            },
+            {
+                "type": "neighborhood",
+                "d_head": 64,
+                "kernel_size": 7
+            },
+            {
+                "type": "global",
+                "d_head": 64
+            }
         ],
         "parametrization": "v",
         "loss_config": "karras",
