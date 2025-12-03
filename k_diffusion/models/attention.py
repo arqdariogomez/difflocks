@@ -178,22 +178,24 @@ class SpatialTransformerSimpleV2(nn.Module):
         # print("final q before giving to flash",q.shape)
         # print("final kv before giving to flash",kv.shape)
 
-        # --- SDPA FINAL CORRECTED BLOCK ---
-        # Preparar tensores para SDPA: [Batch, Heads, Seq, Dim]
+        # --- SDPA STANDARD (FLASH ATTN MATCH) ---
+        # Preparar tensores: [Batch, Heads, Seq, Dim]
         q_t = q.squeeze(2).transpose(1, 2)
         k_chunk, v_chunk = kv.chunk(2, dim=2)
         k_t = k_chunk.squeeze(2).transpose(1, 2)
         v_t = v_chunk.squeeze(2).transpose(1, 2)
-        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False, scale=1.0)
+        # Sin scale=1.0 -> PyTorch usa 1/sqrt(dim), suavizando la atención
+        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False)
         x = x.transpose(1, 2)
         # --------------------------------
-        # --- SDPA FINAL CORRECTED BLOCK ---
-        # Preparar tensores para SDPA: [Batch, Heads, Seq, Dim]
+        # --- SDPA STANDARD (FLASH ATTN MATCH) ---
+        # Preparar tensores: [Batch, Heads, Seq, Dim]
         q_t = q.squeeze(2).transpose(1, 2)
         k_chunk, v_chunk = kv.chunk(2, dim=2)
         k_t = k_chunk.squeeze(2).transpose(1, 2)
         v_t = v_chunk.squeeze(2).transpose(1, 2)
-        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False, scale=1.0)
+        # Sin scale=1.0 -> PyTorch usa 1/sqrt(dim), suavizando la atención
+        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False)
         x = x.transpose(1, 2)
         # --------------------------------
         x = rearrange(x, 'b (h w) nh e -> b (h w) (nh e)', nh=self.n_heads, e=self.d_head, h=h, w=w)
