@@ -22,3 +22,5 @@ pynput
 torchvision
 k-diffusion
 gradio==3.50.2
+dctorch
+jsonmerge
