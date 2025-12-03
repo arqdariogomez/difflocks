@@ -9,33 +9,27 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from typing import Optional, Any
 
-try: import flash_attn
-except: flash_attn = None
-
-
+try:
+    import flash_attn
+except ImportError:
+    flash_attn = None
 
 try:
     import xformers
     import xformers.ops
-
     XFORMERS_IS_AVAILBLE = True
 except:
     XFORMERS_IS_AVAILBLE = False
 
 # CrossAttn precision handling
 import os
-
 _ATTN_PRECISION = os.environ.get("ATTN_PRECISION", "fp32")
 
-
 def zero_module(module):
-    """
-    Zero out the parameters of a module and return it.
-    """
+    """Zero out the parameters of a module and return it."""
     for p in module.parameters():
         p.detach().zero_()
     return module
-
     
 def scale_for_cosine_sim(q, k, scale, eps):
     dtype = reduce(torch.promote_types, (q.dtype, k.dtype, scale.dtype, torch.float32))
@@ -61,13 +55,7 @@ def scale_for_cosine_sim_single(q, scale, eps):
 class SpatialTransformerSimpleV2(nn.Module):
     """
     Transformer block for image-like data.
-    First, project the input (aka embedding)
-    and reshape to b, t, d.
-    Then apply standard transformer action.
-    Finally, reshape to image
-    NEW: use_linear for more efficiency instead of the 1x1 convs
     """
-
     def __init__(self, in_channels, n_heads, d_head,
                  global_cond_dim,
                  do_self_attention=True,
@@ -76,13 +64,11 @@ class SpatialTransformerSimpleV2(nn.Module):
                  ):
         super().__init__()
        
-
         self.in_channels = in_channels
         inner_dim = n_heads * d_head
         self.n_heads = n_heads
         self.d_head = d_head
         self.do_self_attention=do_self_attention
-
 
         self.x_in_norm = AdaRMSNorm(in_channels, global_cond_dim)
 
@@ -94,7 +80,6 @@ class SpatialTransformerSimpleV2(nn.Module):
         self.x_scale = nn.Parameter(torch.full([self.n_heads], 10.0))
 
         self.x_pos_emb = AxialRoPE(d_head // 2, self.n_heads)
-
 
         #context to kv
         self.cond_kv_proj = apply_wd(torch.nn.Linear(context_dim, inner_dim * 2, bias=False))
@@ -119,37 +104,34 @@ class SpatialTransformerSimpleV2(nn.Module):
             x_qkv = self.x_qkv_proj(x)
             pos = rearrange(pos, "... h w e -> ... (h w) e").to(x_qkv.dtype)
             x_theta = self.x_pos_emb(pos)
-            if True: # Force SDPA for Kaggle
+            if True:  # Forzado para Kaggle
                 x_qkv = rearrange(x_qkv, "n h w (t nh e) -> n (h w) t nh e", t=3, e=self.d_head)
                 x_qkv = scale_for_cosine_sim_qkv(x_qkv, self.x_scale, 1e-6)
                 x_theta = torch.stack((x_theta, x_theta, torch.zeros_like(x_theta)), dim=-3)
                 x_qkv = apply_rotary_emb_(x_qkv, x_theta)
                 x_q, x_k, x_v = x_qkv.chunk(3,dim=-3)
             else:
-                pass
-                exit(1)
+                pass  # Skippeado por parche
         else:
             #x to q
             x_q = self.x_q_proj(x)
             pos = rearrange(pos, "... h w e -> ... (h w) e").to(x_q.dtype)
             x_theta = self.x_pos_emb(pos)
-            if True: # Force SDPA for Kaggle
+            if True:  # Forzado para Kaggle
                 x_q = rearrange(x_q, "n h w (nh e) -> n (h w) nh e", e=self.d_head)
                 x_q = scale_for_cosine_sim_single(x_q, self.x_scale[:, None], 1e-6)
                 x_q=x_q.unsqueeze(2) #n (h w) 1 nh e
                 x_theta=x_theta.unsqueeze(1)
                 x_q = apply_rotary_emb_(x_q, x_theta)
             else:
-                pass
-                exit(1)
+                pass  # Skippeado por parche
 
 
         #context to kv
         cond_kv = self.cond_kv_proj(context)
-        # print("cond_kv init",cond_kv.shape)
         context_pos = rearrange(context_pos, "... h w e -> ... (h w) e").to(cond_kv.dtype)
         cond_theta = self.cond_pos_emb(context_pos)
-        if True: # Force SDPA for Kaggle
+        if True:  # Forzado para Kaggle
             cond_kv = rearrange(cond_kv, "n h w (t nh e) -> n (h w) t nh e", t=2, e=self.d_head)
             cond_k, cond_v = cond_kv.unbind(2) # makes each n (h w) nh e
             cond_k = scale_for_cosine_sim_single(cond_k, self.cond_scale[:, None], 1e-6)
@@ -158,41 +140,32 @@ class SpatialTransformerSimpleV2(nn.Module):
             cond_k = apply_rotary_emb_(cond_k, cond_theta)
             cond_k=cond_k.squeeze(2)
         else:
-            pass
-            exit(1)
+            pass  # Skippeado por parche
 
         #doing self attention by concating K and V between X and cond
         if self.do_self_attention:
             k = torch.cat([x_k, cond_k.unsqueeze(2)], dim=1)
             v = torch.cat([x_v, cond_v.unsqueeze(2)], dim=1)
         else:
-            # print("not doing self attention")
             k=cond_k.unsqueeze(2)
             v=cond_v.unsqueeze(2)
         q=x_q
         
-
         #rearange a bit
         q=q.squeeze(2)
         kv=torch.cat([k,v],2)
-        # print("final q before giving to flash",q.shape)
-        # print("final kv before giving to flash",kv.shape)
 
-        # SDPA replacement (REFERENCE EXACT COPY)
-
+        # === PARCHE: Usando SDPA nativo de PyTorch ===
         q_s = q.squeeze(2)
-
         k_s, v_s = kv.chunk(2, dim=2)
-
         k_s, v_s = k_s.squeeze(2), v_s.squeeze(2)
-
         q_t = q_s.transpose(1, 2)
-
         k_t, v_t = k_s.transpose(1, 2), v_s.transpose(1, 2)
-
-        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False, scale=1.0)
-
+        x = torch.nn.functional.scaled_dot_product_attention(
+            q_t, k_t, v_t, is_causal=False, scale=1.0
+        )
         x = x.transpose(1, 2)
+        # === FIN PARCHE ===
 
         x = rearrange(x, 'b (h w) nh e -> b (h w) (nh e)', nh=self.n_heads, e=self.d_head, h=h, w=w)
 
@@ -203,16 +176,8 @@ class SpatialTransformerSimpleV2(nn.Module):
 
         x=  x + x_in 
 
-        #attention part finished------
-
-        #linear feed forward
         x = rearrange(x, 'b c h w -> b h w c', h=h, w=w, c=c)
-
-        # print("x before ff is ", x.shape)
         x = self.ff(x, global_cond)
-
-
         x = rearrange(x, 'b h w c -> b c h w', h=h, w=w, c=c)
 
         return x
-            
