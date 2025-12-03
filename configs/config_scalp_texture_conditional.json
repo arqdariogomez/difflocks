@@ -67,7 +67,11 @@
             "cond_dim": 1024,
             "cond_type": "dinov2",
             "dim_head": 64,
-            "n_heads": 16
+            "n_heads": 16,
+            "global_condition_shape": [
+                1,
+                1024
+            ]
         },
         "loss_weight_per_channel": [
             1.0,
