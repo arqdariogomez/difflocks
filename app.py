@@ -2,7 +2,6 @@ import sys
 import os
 
 # --- FIX MEMORIA: Configuración vital para GPUs T4 (16GB) ---
-# Esto ayuda a que PyTorch no se bloquee cuando la memoria está fragmentada
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.8,max_split_size_mb:128"
 
 import gradio as gr
@@ -47,7 +46,6 @@ def load_model():
     if not diffusion:
         raise FileNotFoundError(f"Diffusion checkpoint not found in {ckpt_root}")
     
-    # Limpieza preventiva antes de cargar
     gc.collect()
     torch.cuda.empty_cache()
     
@@ -56,8 +54,8 @@ def load_model():
         str(config_path),
         str(diffusion[0]),
         str(rgb2mat) if rgb2mat.exists() else None,
-        cfg_val=4.0,
-        nr_chunks_decode=150  # <--- FIX CLAVE: Más chunks = Menos memoria VRAM usada
+        cfg_val=4.0, 
+        nr_chunks_decode=150
     )
     print("✅ Model Loaded Successfully!")
     return MODEL_INSTANCE
@@ -67,17 +65,21 @@ def predict(image, cfg_scale, export_obj):
     try:
         PATHS.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Limpieza agresiva antes de inferencia
         gc.collect()
         torch.cuda.empty_cache()
         
         model = load_model()
-        model.cfg_val = float(cfg_scale)
         
         in_path = PATHS.output_dir / "input_temp.png"
         image.save(in_path)
         
-        strands, mats = model.file2hair(str(in_path), str(PATHS.output_dir))
+        # FIX: Pasamos el CFG dinámicamente
+        print(f"🔄 Llamando a inferencia con CFG: {float(cfg_scale)}")
+        strands, mats = model.file2hair(
+            str(in_path), 
+            str(PATHS.output_dir), 
+            cfg_val=float(cfg_scale)
+        )
         
         if strands is None: return None, None, "Inference returned None (Face not detected?)"
             
@@ -86,7 +88,6 @@ def predict(image, cfg_scale, export_obj):
         
         if export_obj:
             out_obj = PATHS.output_dir / "hair.obj"
-            # Procesar OBJ con cuidado de memoria (NumPy usa CPU, es seguro)
             pos = strands.cpu().numpy()
             with open(out_obj, 'w') as f:
                 f.write("o Hair\n")
@@ -101,7 +102,6 @@ def predict(image, cfg_scale, export_obj):
         
     except Exception as e:
         traceback.print_exc()
-        # Intentar liberar memoria si falló
         gc.collect()
         torch.cuda.empty_cache()
         return None, None, f"Error: {str(e)}"
