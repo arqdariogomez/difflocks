@@ -182,8 +182,9 @@ class SpatialTransformerSimpleV2(nn.Module):
         q_s = q.squeeze(2); k_s, v_s = kv.chunk(2, dim=2)
         k_s, v_s = k_s.squeeze(2), v_s.squeeze(2)
         q_t = q_s.transpose(1, 2); k_t, v_t = k_s.transpose(1, 2), v_s.transpose(1, 2)
-        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False)
+        x = torch.nn.functional.scaled_dot_product_attention(q_t, k_t, v_t, is_causal=False, scale=1.0)
         x = x.transpose(1, 2)
+                x = x.unsqueeze(2)
 
         x = rearrange(x, 'b (h w) nh e -> b (h w) (nh e)', nh=self.n_heads, e=self.d_head, h=h, w=w)
 
