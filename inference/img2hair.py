@@ -22,10 +22,15 @@ from mediapipe.tasks.python import vision
 
 DEFAULT_BODY_DATA_DIR = "data_loader/difflocks_bodydata"
 tbn_space_to_world_cpu = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float()
+
+# Configuración CPU threads
 torch.set_num_threads(4)
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES AUXILIARES (TBN & GEOMETRÍA) ---
+# Mantenemos nuestras versiones seguras para CPU
+
 def interpolate_tbn(barys, vertex_idxs, v_tangents, v_bitangents, v_normals):
+    """Interpolación baricéntrica (Numpy puro)."""
     nr_positions = barys.shape[0]
     sampled_tangents = v_tangents[vertex_idxs.reshape(-1),:].reshape(nr_positions,3,3)
     weighted_tangents = sampled_tangents * barys.reshape(nr_positions,3,1)
@@ -84,24 +89,44 @@ def force_cleanup():
     gc.collect()
     if torch.cuda.is_available(): torch.cuda.empty_cache()
 
-def crop_face(image, face_landmarks, output_size=770):
+# --- FIX CRÍTICO DE GEOMETRÍA (CROP FACE 2.8x) ---
+# Adaptado del código de referencia que me pasaste
+def crop_face(image, face_landmarks, output_size, crop_size_multiplier=2.8):
     h, w, _ = image.shape
+    
+    # Landmarks conversion logic from reference
+    # Assuming face_landmarks are normalized [0,1] objects with x,y attributes
     xs = [l.x for l in face_landmarks]; ys = [l.y for l in face_landmarks]
+    
+    # Pixel coordinates approximation for bounding box
     min_x, max_x = min(xs) * w, max(xs) * w
     min_y, max_y = min(ys) * h, max(ys) * h
+    
+    # Calculate center and size
     cx, cy = (min_x + max_x) / 2, (min_y + max_y) / 2
     face_w, face_h = max_x - min_x, max_y - min_y
-    size = max(face_w, face_h) * 1.5
+    
+    # THE KEY FIX: USE 2.8 MULTIPLIER (Not 1.5)
+    size = max(face_w, face_h) * crop_size_multiplier
+    
     x1 = int(cx - size / 2); y1 = int(cy - size / 2)
     x2 = int(cx + size / 2); y2 = int(cy + size / 2)
+    
     pad_l = max(0, -x1); pad_t = max(0, -y1)
     pad_r = max(0, x2 - w); pad_b = max(0, y2 - h)
+    
     if any([pad_l, pad_t, pad_r, pad_b]):
         image = np.pad(image, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), mode='constant')
         x1 += pad_l; y1 += pad_t; x2 += pad_l; y2 += pad_t
+        
     crop = image[y1:y2, x1:x2]
-    try: return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_CUBIC)
-    except: return cv2.resize(image, (output_size, output_size))
+    
+    try: 
+        return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_CUBIC)
+    except: 
+        return cv2.resize(image, (output_size, output_size))
+
+# --- CLASES PRINCIPALES ---
 
 class Mediapipe:
     def __init__(self):
@@ -137,21 +162,18 @@ class DiffLocksInference():
     def rgb2hair(self, rgb_img, out_path=None, cfg_val=None):
         if out_path: os.makedirs(out_path, exist_ok=True)
         
-        # --- DEBUG EXTREMO ---
         actual_cfg = cfg_val if cfg_val is not None else self.cfg_val
-        print(f"\n{'#'*40}")
-        print(f"📢 [DEBUG] INFERENCIA INICIADA")
-        print(f"👉 CFG RECIBIDO: {actual_cfg} (Tipo: {type(actual_cfg)})")
-        print(f"👉 CFG DEFAULT:  {self.cfg_val}")
-        print(f"{'#'*40}\n")
-        # ---------------------
+        print(f"🔄 Inferencia con CFG: {actual_cfg}")
 
         try:
-            print("   [1/4] Processing Geometry...")
+            print("   [1/4] Processing Geometry (2.8x Zoom)...")
             frame = (rgb_img.permute(0,2,3,1).squeeze(0)*255).byte().cpu().numpy()
             _, lms = self.mediapipe_img.run(frame)
             if not lms: return None, None
+            
+            # FIX: Usar crop_face corregido
             cropped_face = crop_face(frame, lms, 770)
+            
             del frame
             rgb_img_gpu = torch.tensor(cropped_face).cuda().permute(2,0,1).unsqueeze(0).float()/255.0
             rgb_img_cpu = rgb_img_gpu.cpu().clone()
