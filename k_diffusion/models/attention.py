@@ -21,7 +21,6 @@ try:
 except:
     XFORMERS_IS_AVAILBLE = False
 
-# CrossAttn precision handling
 import os
 _ATTN_PRECISION = os.environ.get("ATTN_PRECISION", "fp32")
 
@@ -72,7 +71,6 @@ class SpatialTransformerSimpleV2(nn.Module):
 
         self.x_in_norm = AdaRMSNorm(in_channels, global_cond_dim)
 
-        #x to qkv
         if self.do_self_attention:
             self.x_qkv_proj = apply_wd(torch.nn.Linear(in_channels, inner_dim * 3, bias=False))
         else:
@@ -81,7 +79,6 @@ class SpatialTransformerSimpleV2(nn.Module):
 
         self.x_pos_emb = AxialRoPE(d_head // 2, self.n_heads)
 
-        #context to kv
         self.cond_kv_proj = apply_wd(torch.nn.Linear(context_dim, inner_dim * 2, bias=False))
         self.cond_scale = nn.Parameter(torch.full([self.n_heads], 10.0))
         self.cond_pos_emb = AxialRoPE(d_head // 2, self.n_heads)
@@ -100,7 +97,6 @@ class SpatialTransformerSimpleV2(nn.Module):
         x = self.x_in_norm(x, global_cond)
 
         if self.do_self_attention:
-            #x to qkv
             x_qkv = self.x_qkv_proj(x)
             pos = rearrange(pos, "... h w e -> ... (h w) e").to(x_qkv.dtype)
             x_theta = self.x_pos_emb(pos)
@@ -111,38 +107,34 @@ class SpatialTransformerSimpleV2(nn.Module):
                 x_qkv = apply_rotary_emb_(x_qkv, x_theta)
                 x_q, x_k, x_v = x_qkv.chunk(3,dim=-3)
             else:
-                pass  # Skippeado por parche
+                pass
         else:
-            #x to q
             x_q = self.x_q_proj(x)
             pos = rearrange(pos, "... h w e -> ... (h w) e").to(x_q.dtype)
             x_theta = self.x_pos_emb(pos)
             if True:  # Forzado para Kaggle
                 x_q = rearrange(x_q, "n h w (nh e) -> n (h w) nh e", e=self.d_head)
                 x_q = scale_for_cosine_sim_single(x_q, self.x_scale[:, None], 1e-6)
-                x_q=x_q.unsqueeze(2) #n (h w) 1 nh e
+                x_q=x_q.unsqueeze(2)
                 x_theta=x_theta.unsqueeze(1)
                 x_q = apply_rotary_emb_(x_q, x_theta)
             else:
-                pass  # Skippeado por parche
+                pass
 
-
-        #context to kv
         cond_kv = self.cond_kv_proj(context)
         context_pos = rearrange(context_pos, "... h w e -> ... (h w) e").to(cond_kv.dtype)
         cond_theta = self.cond_pos_emb(context_pos)
         if True:  # Forzado para Kaggle
             cond_kv = rearrange(cond_kv, "n h w (t nh e) -> n (h w) t nh e", t=2, e=self.d_head)
-            cond_k, cond_v = cond_kv.unbind(2) # makes each n (h w) nh e
+            cond_k, cond_v = cond_kv.unbind(2)
             cond_k = scale_for_cosine_sim_single(cond_k, self.cond_scale[:, None], 1e-6)
-            cond_k=cond_k.unsqueeze(2) #n (h w) 1 nh e
+            cond_k=cond_k.unsqueeze(2)
             cond_theta=cond_theta.unsqueeze(1)
             cond_k = apply_rotary_emb_(cond_k, cond_theta)
             cond_k=cond_k.squeeze(2)
         else:
-            pass  # Skippeado por parche
+            pass
 
-        #doing self attention by concating K and V between X and cond
         if self.do_self_attention:
             k = torch.cat([x_k, cond_k.unsqueeze(2)], dim=1)
             v = torch.cat([x_v, cond_v.unsqueeze(2)], dim=1)
@@ -151,11 +143,10 @@ class SpatialTransformerSimpleV2(nn.Module):
             v=cond_v.unsqueeze(2)
         q=x_q
         
-        #rearange a bit
         q=q.squeeze(2)
         kv=torch.cat([k,v],2)
 
-        # === PARCHE: Usando SDPA nativo de PyTorch ===
+        # === PARCHE REFERENCE V7: SDPA con scale=1.0 ===
         q_s = q.squeeze(2)
         k_s, v_s = kv.chunk(2, dim=2)
         k_s, v_s = k_s.squeeze(2), v_s.squeeze(2)
@@ -169,7 +160,6 @@ class SpatialTransformerSimpleV2(nn.Module):
 
         x = rearrange(x, 'b (h w) nh e -> b (h w) (nh e)', nh=self.n_heads, e=self.d_head, h=h, w=w)
 
-        #last ff
         x = self.dropout(x)
         x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w, c=c)
