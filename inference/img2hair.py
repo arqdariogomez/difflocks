@@ -22,47 +22,35 @@ from mediapipe.tasks.python import vision
 
 DEFAULT_BODY_DATA_DIR = "data_loader/difflocks_bodydata"
 tbn_space_to_world_cpu = torch.tensor([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]]).float()
-
-# Configuración CPU threads
 torch.set_num_threads(4)
 
-# --- FUNCIONES AUXILIARES (TBN & GEOMETRÍA) ---
-
+# --- FUNCIONES AUXILIARES ---
 def interpolate_tbn(barys, vertex_idxs, v_tangents, v_bitangents, v_normals):
-    """Interpolación baricéntrica (Numpy puro)."""
     nr_positions = barys.shape[0]
-    
-    # Tangents
     sampled_tangents = v_tangents[vertex_idxs.reshape(-1),:].reshape(nr_positions,3,3)
     weighted_tangents = sampled_tangents * barys.reshape(nr_positions,3,1)
     point_tangents = weighted_tangents.sum(axis=1)
     norm = np.linalg.norm(point_tangents, axis=-1, keepdims=True)
     point_tangents = point_tangents / (norm + 1e-8)
 
-    # Normals
     sampled_normals = v_normals[vertex_idxs.reshape(-1),:].reshape(nr_positions,3,3)
     weighted_normals = sampled_normals * barys.reshape(nr_positions,3,1)
     point_normals = weighted_normals.sum(axis=1)
     norm = np.linalg.norm(point_normals, axis=-1, keepdims=True)
     point_normals = point_normals / (norm + 1e-8)
 
-    # Bitangents
     point_bitangents = np.cross(point_normals, point_tangents)
     norm = np.linalg.norm(point_bitangents, axis=-1, keepdims=True)
     point_bitangents = point_bitangents / (norm + 1e-8)
 
-    # Re-orthogonalize Tangents
     point_tangents = np.cross(point_bitangents, point_normals)
     norm = np.linalg.norm(point_tangents, axis=-1, keepdims=True)
     point_tangents = point_tangents / (norm + 1e-8)
-
     return point_tangents, point_bitangents, point_normals
 
 def tbn_space_to_world_cpu_safe(root_uv, strands_positions, scalp_mesh_data):
-    """Versión CPU-SAFE de tbn_space_to_world."""
     target_device = strands_positions.device
     target_dtype = torch.float32 
-
     scalp_index_map = scalp_mesh_data["index_map"]
     scalp_vertex_idxs_map = scalp_mesh_data["vertex_idxs_map"]
     scalp_bary_map = scalp_mesh_data["bary_map"]
@@ -70,59 +58,31 @@ def tbn_space_to_world_cpu_safe(root_uv, strands_positions, scalp_mesh_data):
     mesh_v_bitangents = scalp_mesh_data["v_bitangents"]
     mesh_v_normals = scalp_mesh_data["v_normals"]
     scalp_v = scalp_mesh_data["verts"]
-    
     tex_size = scalp_vertex_idxs_map.shape[0]
-    
     root_uv_np = root_uv.cpu().numpy() if torch.is_tensor(root_uv) else root_uv
     pixel_indices = np.floor(root_uv_np * tex_size).astype(int)
     pixel_indices = np.clip(pixel_indices, 0, tex_size - 1)
-
     vertex_idxs = scalp_vertex_idxs_map[pixel_indices[:, 0], pixel_indices[:, 1], :]
     barys = scalp_bary_map[pixel_indices[:, 0], pixel_indices[:, 1], :]
-
-    root_tangent, root_bitangent, root_normal = interpolate_tbn(
-        barys, vertex_idxs, mesh_v_tangents, mesh_v_bitangents, mesh_v_normals
-    )
-    
+    root_tangent, root_bitangent, root_normal = interpolate_tbn(barys, vertex_idxs, mesh_v_tangents, mesh_v_bitangents, mesh_v_normals)
     strands_tbn_np = np.stack((root_tangent, root_bitangent, root_normal), axis=2)
     strands_tbn = torch.as_tensor(strands_tbn_np, device=target_device, dtype=target_dtype)
-    
     indices_tbn = torch.tensor([0, 2, 1], device=target_device, dtype=torch.long)
     strands_tbn = torch.index_select(strands_tbn, 2, indices_tbn)
     strands_tbn[..., 0] = -strands_tbn[..., 0]
-
     orig_points = torch.matmul(strands_tbn, strands_positions.permute(0, 2, 1)).permute(0, 2, 1)
-
     nr_positions = vertex_idxs.shape[0]
     sampled_v_np = scalp_v[vertex_idxs.reshape(-1), :].reshape(nr_positions, 3, 3)
     sampled_v = torch.as_tensor(sampled_v_np, device=target_device, dtype=target_dtype)
     barys_tensor = torch.as_tensor(barys, device=target_device, dtype=target_dtype)
-    
     weighted_v = sampled_v * barys_tensor.reshape(nr_positions, 3, 1)
     roots_positions = weighted_v.sum(dim=1)
     strds_points = orig_points + roots_positions[:, None, :]
-    
     return strds_points
-
-# --- UTILIDADES DE MEMORIA Y CROP ---
-
-def get_memory_info():
-    try:
-        ram = psutil.virtual_memory()
-        return ram.used / (1024**3), ram.total / (1024**3)
-    except:
-        return 0,0
-
-def log_memory(phase):
-    u, t = get_memory_info()
-    print(f"   [MEM] {phase}: RAM {u:.1f}/{t:.1f}GB")
 
 def force_cleanup():
     gc.collect()
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    time.sleep(0.3)
+    if torch.cuda.is_available(): torch.cuda.empty_cache()
 
 def crop_face(image, face_landmarks, output_size=770):
     h, w, _ = image.shape
@@ -143,7 +103,6 @@ def crop_face(image, face_landmarks, output_size=770):
     try: return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_CUBIC)
     except: return cv2.resize(image, (output_size, output_size))
 
-# --- CLASE MEDIAPIPE ---
 class Mediapipe:
     def __init__(self):
         asset_path = 'inference/assets/face_landmarker_v2_with_blendshapes.task'
@@ -157,7 +116,6 @@ class Mediapipe:
         res = self.detector.detect(mp_image)
         return (res.face_blendshapes[0], res.face_landmarks[0]) if res.face_landmarks else (None, None)
 
-# --- CLASE PRINCIPAL ---
 class DiffLocksInference():
     def __init__(self, path_ckpt_strandcodec, path_config_difflocks, path_ckpt_difflocks,
                  path_ckpt_rgb2material=None, cfg_val=1.0, nr_iters_denoise=100, nr_chunks_decode=150):
@@ -165,112 +123,81 @@ class DiffLocksInference():
         self.nr_chunks_decode_strands = nr_chunks_decode
         self.nr_iters_denoise = nr_iters_denoise
         self.cfg_val = cfg_val
-        self.paths = {
-            'codec': path_ckpt_strandcodec,
-            'config': path_config_difflocks,
-            'diff': path_ckpt_difflocks,
-            'mat': path_ckpt_rgb2material
-        }
-        
+        self.paths = { 'codec': path_ckpt_strandcodec, 'config': path_config_difflocks, 'diff': path_ckpt_difflocks, 'mat': path_ckpt_rgb2material }
         self.mediapipe_img = Mediapipe()
         self.normalization_dict = DiffLocksDataset.get_normalization_data()
-        
         scalp_path = os.path.join(DEFAULT_BODY_DATA_DIR, "scalp.ply")
         if not os.path.exists(scalp_path): scalp_path = "data_loader/difflocks_bodydata/scalp.ply"
         self.scalp_trimesh, self.scalp_mesh_data = DiffLocksDataset.compute_scalp_data(scalp_path)
-        
-        # CPU Cache
         self.norm_dict_cpu = {k: v.cpu() if torch.is_tensor(v) else v for k, v in self.normalization_dict.items()}
         self.mesh_data_cpu = {k: v.cpu() if torch.is_tensor(v) else v for k, v in self.scalp_mesh_data.items()}
         self.tbn_space_to_world = tbn_space_to_world_cpu_safe
 
     @torch.inference_mode()
-    # NUEVO: cfg_val opcional
     def rgb2hair(self, rgb_img, out_path=None, cfg_val=None):
         if out_path: os.makedirs(out_path, exist_ok=True)
-        log_memory("Inicio Inferencia")
         
-        # Lógica de prioridad: Si pasaron un cfg_val, úsalo. Si no, usa el del init.
-        current_cfg = cfg_val if cfg_val is not None else self.cfg_val
-        print(f"   [INFO] Usando CFG Scale: {current_cfg}")
+        # --- DEBUG EXTREMO ---
+        actual_cfg = cfg_val if cfg_val is not None else self.cfg_val
+        print(f"\n{'#'*40}")
+        print(f"📢 [DEBUG] INFERENCIA INICIADA")
+        print(f"👉 CFG RECIBIDO: {actual_cfg} (Tipo: {type(actual_cfg)})")
+        print(f"👉 CFG DEFAULT:  {self.cfg_val}")
+        print(f"{'#'*40}\n")
+        # ---------------------
 
         try:
-            # 1. FACE
             print("   [1/4] Processing Geometry...")
             frame = (rgb_img.permute(0,2,3,1).squeeze(0)*255).byte().cpu().numpy()
             _, lms = self.mediapipe_img.run(frame)
-            if not lms: 
-                print("   [ERROR] No face detected")
-                return None, None
-            
+            if not lms: return None, None
             cropped_face = crop_face(frame, lms, 770)
             del frame
-            
             rgb_img_gpu = torch.tensor(cropped_face).cuda().permute(2,0,1).unsqueeze(0).float()/255.0
             rgb_img_cpu = rgb_img_gpu.cpu().clone()
             
-            # 2. DINO
             print("   [2/4] DINO Features...")
             dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_reg', verbose=False).cuda()
             tf = T.Compose([T.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225))])
             out = dinov2.forward_features(tf(rgb_img_gpu))
-            
             patch = out["x_norm_patchtokens"]
             cls_tok = out["x_norm_clstoken"]
             h = w = int(patch.shape[1]**0.5)
             patch_emb = patch.reshape(patch.shape[0], h, w, -1).permute(0, 3, 1, 2).contiguous()
-            
-            patch_emb_cpu = patch_emb.cpu().clone()
-            cls_tok_cpu = cls_tok.cpu().clone()
-            
+            patch_emb_cpu = patch_emb.cpu().clone(); cls_tok_cpu = cls_tok.cpu().clone()
             del dinov2, out, patch, cls_tok, patch_emb, rgb_img_gpu
             force_cleanup()
             
-            # 3. DIFFUSION
             print("   [3/4] Diffusion...")
             conf = K.config.load_config(self.paths['config'])
             model = K.config.make_denoiser_wrapper(conf)(K.config.make_model(conf).cuda())
             ckpt = torch.load(self.paths['diff'], map_location='cpu', weights_only=False)
             model.inner_model.load_state_dict(ckpt['model_ema'])
-            del ckpt
-            force_cleanup()
-            
-            model.eval()
-            model.inner_model.condition_dropout_rate = 0.0
+            del ckpt; force_cleanup()
+            model.eval(); model.inner_model.condition_dropout_rate = 0.0
             
             extra = {'latents_dict': {"dinov2": {"cls_token": cls_tok_cpu.cuda(), "final_latent": patch_emb_cpu.cuda()}}}
             
-            # USAMOS current_cfg AQUÍ
-            scalp = sample_images_cfg(1, current_cfg, [-1., 10000.], model, conf['model'], self.nr_iters_denoise, extra)
+            # USANDO EL CFG ACTUAL
+            scalp = sample_images_cfg(1, actual_cfg, [-1., 10000.], model, conf['model'], self.nr_iters_denoise, extra)
             
-            scalp_cpu = scalp.cpu().clone()
-            sigma_data = conf['model']["sigma_data"]
-            
-            del model, scalp, extra, conf
-            force_cleanup()
+            scalp_cpu = scalp.cpu().clone(); sigma_data = conf['model']["sigma_data"]
+            del model, scalp, extra, conf; force_cleanup()
             
             density = (scalp_cpu[:,-1:]*(0.5/sigma_data)+0.5).clamp(0,1)
             density[density<0.02] = 0.0
             if density.sum() == 0: return None, None
             
-            # 4. DECODING
             print("   [4/4] Decoding (CPU Mode)...")
             codec = StrandCodec(do_vae=False, decode_type="dir", nr_verts_per_strand=256).cpu()
             codec.load_state_dict(torch.load(self.paths['codec'], map_location='cpu', weights_only=False))
             codec.eval()
-            
-            print(f"   [INFO] Chunks: {self.nr_chunks_decode_strands} | Verts: 256")
-            
+            print(f"   [INFO] Chunks: {self.nr_chunks_decode_strands}")
             strands, _ = sample_strands_from_scalp_with_density(
                 scalp_cpu[:,0:-1], density, codec, self.norm_dict_cpu, 
-                self.mesh_data_cpu, self.tbn_space_to_world, 
-                self.nr_chunks_decode_strands
-            )
+                self.mesh_data_cpu, self.tbn_space_to_world, self.nr_chunks_decode_strands)
+            del codec, scalp_cpu, density; force_cleanup()
             
-            del codec, scalp_cpu, density
-            force_cleanup()
-            
-            # 5. SAVE
             print("   [5/5] Saving...")
             if out_path and strands is not None:
                 positions = strands.cpu().numpy()
@@ -282,13 +209,10 @@ class DiffLocksInference():
             return strands, None
 
         except Exception as e:
-            print(f"   ❌ {e}")
-            traceback.print_exc()
-            raise
+            print(f"   ❌ {e}"); traceback.print_exc(); raise
         finally:
             force_cleanup()
 
-    # NUEVO: Pasar cfg_val hacia abajo
     def file2hair(self, fpath, out, cfg_val=None):
         img = cv2.imread(fpath)
         if img is None: raise FileNotFoundError(f"{fpath}")
