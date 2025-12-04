@@ -152,6 +152,7 @@ class DiffLocksInference():
             cropped_face = crop_face(frame, lms, 770)
             del frame
             rgb_img_gpu = torch.tensor(cropped_face).cuda().permute(2,0,1).unsqueeze(0).float()/255.0
+            rgb_img_cpu = rgb_img_gpu.cpu().clone() # Backup para guardar al final
             yield "log", "✅ Rostro detectado y recortado (Zoom 2.8x)"
             
             # 2. DINO
