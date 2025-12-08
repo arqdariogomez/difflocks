@@ -55,11 +55,10 @@ Wait for the installation to finish. Once ready, open your browser at:
 
 To import the generated hair into Blender:
 
-1.  Go to the `blender_addon/` folder in this repo.
-2.  Download `DiffLocks_Blender_Importer.zip`.
-3.  In Blender: `Edit > Preferences > Add-ons > Install...` and select the zip.
-4.  Enable the add-on.
-5.  Import via: `File > Import > DiffLocks Hair (.npz)`.
+1.  Download `DiffLocks_Blender_Importer.zip`.
+2.  In Blender: `Edit > Preferences > Add-ons > Install...` and select the zip.
+3.  Enable the add-on.
+4.  Import via: `File > Import > DiffLocks Hair (.npz)`.
 
 ---
 
