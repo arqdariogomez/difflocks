@@ -1,0 +1,12 @@
+outputs/ 
+studio_outputs/ 
+__pycache__/ 
+*.zip 
+venv/ 
+checkpoints/ 
+outputs/ 
+studio_outputs/ 
+__pycache__/ 
+*.zip 
+venv/ 
+checkpoints_safe/ 

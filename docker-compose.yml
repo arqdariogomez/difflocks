@@ -1,0 +1,22 @@
+services:
+  difflocks:
+    build: .
+    container_name: difflocks_studio
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "7860:7860"
+    volumes:
+      # Mapeamos las carpetas (Ahora sí funcionará por estar en C:\)
+      - ./app.py:/app/app.py
+      - ./checkpoints:/app/checkpoints
+      - ./studio_outputs:/app/studio_outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: python app.py
