@@ -1,16 +1,14 @@
-# Ignorar la carpeta de salidas para no copiarla a la imagen
 outputs/
 studio_outputs/
 
-# Ignorar archivos del sistema y de Git
 .git/
 .gitignore
 .idea/
 
-# Ignorar entornos virtuales de Python si existen
 venv/
 *.venv/
 
-# Ignorar archivos temporales de Windows/Mac
 Thumbs.db
 .DS_Store
+
+checkpoints/

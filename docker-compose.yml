@@ -8,8 +8,6 @@ services:
     ports:
       - "7860:7860"
     volumes:
-      # Mapeamos las carpetas (Ahora sí funcionará por estar en C:\)
-      - ./app.py:/app/app.py
       - ./checkpoints:/app/checkpoints
       - ./studio_outputs:/app/studio_outputs
     deploy:
