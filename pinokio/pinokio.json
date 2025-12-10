@@ -1,0 +1,1 @@
+{"cmds": {"main": "app.py"}, "title": "DiffLocks Studio", "icon": "icon.png", "menu": [{"text": "Install", "href": "install.json"}, {"text": "Start", "href": "start.json"}]}

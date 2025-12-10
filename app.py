@@ -1,197 +1,157 @@
-import gradio as gr
-import torch
+
 import os
 import sys
-import re
-import numpy as np
-from pathlib import Path
-import shutil
 import time
-import io
+import shutil
 import subprocess
+import gradio as gr
+import numpy as np
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from pathlib import Path
 
-# --- CONFIG ---
-CURRENT_DIR = Path(os.getcwd())
-sys.path.append(str(CURRENT_DIR))
-
+# --- 1. SETUP ---
 try:
-    from inference.img2hair import DiffLocksInference
+    from platform_config import cfg
 except ImportError:
-    sys.path.insert(0, str(CURRENT_DIR))
-    from inference.img2hair import DiffLocksInference
+    sys.path.append(".")
+    from platform_config import cfg
 
-# --- CHECKPOINTS ---
-print("🔍 Scanning models...", flush=True)
-def find_file(name, search_path):
-    found = list(search_path.rglob(name))
-    if found: return str(found[0])
-    return None
+if str(cfg.repo_dir) not in sys.path:
+    sys.path.append(str(cfg.repo_dir))
 
-PATH_DIFF = find_file("*scalp*.pth", CURRENT_DIR)
-PATH_CODEC = find_file("strand_codec.pt", CURRENT_DIR)
-PATH_RGB = find_file("rgb2material.pt", CURRENT_DIR)
-PATH_CONF = find_file("config_scalp_texture_conditional.json", CURRENT_DIR)
+if cfg.platform == 'huggingface' and not cfg.blender_exe.exists():
+    print("📦 Downloading Blender for HF Space...")
+    b_dir = Path("/tmp/blender")
+    b_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run("wget -q -O /tmp/blender.tar.xz https://download.blender.org/release/Blender4.2/blender-4.2.5-linux-x64.tar.xz", shell=True)
+    subprocess.run(f"tar -xf /tmp/blender.tar.xz -C {b_dir} --strip-components=1", shell=True)
 
-if not all([PATH_DIFF, PATH_CODEC, PATH_CONF]):
-    print("❌ ERROR: Checkpoints missing.", flush=True)
-else:
-    print("✅ Checkpoints OK.", flush=True)
-
-OUTPUT_DIR = CURRENT_DIR / "studio_outputs"
-OUTPUT_DIR.mkdir(exist_ok=True)
-
-# --- ENGINE ---
-print("⏳ Initializing...", flush=True)
+# --- 2. MODEL LOADING ---
 try:
-    torch.set_default_dtype(torch.float32)
-    model = DiffLocksInference(
-        PATH_CODEC, PATH_CONF, PATH_DIFF, PATH_RGB,
-        cfg_val=2.5, nr_iters_denoise=100, nr_chunks_decode=50 
-    )
-    print("✅ Engine Ready.", flush=True)
-except Exception as e:
-    print(f"❌ Init Failed: {e}", flush=True)
-    model = None
+    import spaces
+    has_zerogpu = True
+except ImportError:
+    has_zerogpu = False
 
-# --- BLENDER BRIDGE ---
-def run_blender_conversion(npz_path, output_base):
-    script_path = "/app/converter.py"
-    if not os.path.exists(script_path): return False, "Script missing"
+print(f"🚀 Initializing on {cfg.platform} (GPU: {cfg.has_gpu}, ZeroGPU: {has_zerogpu})")
 
-    cmd = ["blender", "-b", "-P", script_path, "--", str(npz_path), str(output_base)]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0: return True, "Success"
-        else: return False, f"Blender Error: {result.stderr}"
-    except Exception as e: return False, str(e)
+from inference.img2hair import DiffLocksInference
 
-# --- LOGS ---
-class OutputTee(io.StringIO):
-    def __init__(self, stream):
-        super().__init__()
-        self.stream = stream
-        self.log_content = ""
-        self.last_pct = ""
-    def write(self, data):
-        self.stream.write(data)
-        self.log_content += data
-        match = re.search(r'(\d+)%', data)
-        if match: self.last_pct = match.group(1) + "%"
-    def flush(self): self.stream.flush()
-    def get_log(self): return self.log_content
+# Locate Weights
+ckpt_dir = cfg.repo_dir / "checkpoints"
+diff_path = list((ckpt_dir/"difflocks_diffusion").glob("*.pth"))
+vae_path = ckpt_dir / "strand_vae/strand_codec.pt"
+conf_path = cfg.repo_dir / "configs/config_scalp_texture_conditional.json"
 
-tee_stdout = OutputTee(sys.stdout)
-tee_stderr = OutputTee(sys.stderr)
+model = None
 
-def predict(image, cfg_scale, do_blender):
-    if image is None: raise gr.Error("No image.")
+def load_model():
+    global model
+    if model is not None: return
     
-    yield {
-        btn_run: gr.Button.update(value="⏳ PROCESSING...", interactive=False),
-        status_box: "🚀 Starting...",
-        console_box: "Init...",
-        result_group: gr.Group.update(visible=False),
-        files_out: None,
-        viewer: None
-    }
-    
-    job_id = str(int(time.time()))
-    current_out = OUTPUT_DIR / job_id
-    current_out.mkdir(parents=True, exist_ok=True)
-    model.cfg_val = float(cfg_scale)
-    
-    sys.stdout = tee_stdout
-    sys.stderr = tee_stderr
-    tee_stdout.log_content = ""
-    tee_stderr.log_content = ""
-    
-    try:
-        generator = model.file2hair(str(image), str(current_out))
-        current_status = "Processing..."
+    if not diff_path or not vae_path.exists():
+        # Fallback recursive search
+        print("⚠️ Standard paths failed. Searching recursively...")
+        found_diff = list(cfg.repo_dir.rglob("*diffusion*.pth"))
+        found_vae = list(cfg.repo_dir.rglob("strand_codec.pt"))
         
-        for update in generator:
-            current_logs = tee_stdout.get_log() + tee_stderr.get_log()
-            pct = f" ({tee_stdout.last_pct})" if tee_stdout.last_pct else ""
+        if not found_diff or not found_vae:
+            raise FileNotFoundError("Checkpoints missing! Please download them.")
+        
+        diff_p = str(found_diff[0])
+        vae_p = str(found_vae[0])
+    else:
+        diff_p = str(diff_path[0])
+        vae_p = str(vae_path)
+
+    print(f"Loading Model: {Path(diff_p).name}")
+    model = DiffLocksInference(vae_p, str(conf_path), diff_p, None)
+
+if not has_zerogpu and cfg.has_gpu:
+    try: load_model() 
+    except: print("⚠️ Could not preload model (maybe missing files).")
+
+# --- 3. LOGIC ---
+def run_inference(img, cfg_val, fmts):
+    if img is None: raise gr.Error("Image required")
+    if model is None: load_model()
+    
+    job_id = f"j_{int(time.time())}"
+    job_dir = cfg.output_dir / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    
+    img_p = job_dir / "input.png"
+    if isinstance(img, str): shutil.copy(img, img_p)
+    else: img.save(img_p)
+    
+    # 1. GENERATION
+    model.cfg_val = float(cfg_val)
+    
+    for update in model.file2hair(str(img_p), str(job_dir)):
+        if isinstance(update, tuple) and update[0] == "status":
+            yield None, None, f"⚙️ {update[1]}", gr.Group(visible=False)
             
-            if isinstance(update, tuple):
-                tag = update[0]
-                if tag == "status":
-                    current_status = update[1]
-                    yield {status_box: f"🔄 {current_status}", console_box: current_logs}
-                elif tag == "log":
-                    if "sampling" in current_status.lower():
-                         yield {status_box: f"🔄 {current_status}{pct}", console_box: current_logs}
-                    else:
-                        yield {console_box: current_logs}
-                elif tag == "error": raise Exception(update[1])
-            
-            if len(current_logs) % 50 == 0: yield {console_box: current_logs}
-
-        # Conversion
-        npz_file = current_out / "difflocks_output_strands.npz"
-        outputs = []
-        viewer_file = None
-        
-        if npz_file.exists():
-            outputs.append(str(npz_file))
-            if do_blender:
-                yield {status_box: "🔨 Running Blender Conversion..."}
-                base_name = current_out / "hair"
-                success, msg = run_blender_conversion(npz_file, base_name)
-                if success:
-                    for ext in [".blend", ".abc", ".glb"]:
-                        f = current_out / f"hair{ext}"
-                        if f.exists():
-                            outputs.append(str(f))
-                            if ext == ".glb": viewer_file = str(f)
-                else:
-                    print(f"Blender failed: {msg}")
-
-        sys.stdout = tee_stdout.stream
-        sys.stderr = tee_stderr.stream
-        
-        yield {
-            btn_run: gr.Button.update(value="✨ GENERATE HAIR", interactive=True),
-            status_box: "✅ Done!",
-            console_box: tee_stdout.get_log() + tee_stderr.get_log(),
-            result_group: gr.Group.update(visible=True),
-            files_out: outputs,
-            viewer: viewer_file
-        }
-
-    except Exception as e:
-        sys.stdout = tee_stdout.stream
-        sys.stderr = tee_stderr.stream
-        yield {
-            btn_run: gr.Button.update(value="❌ Retry", interactive=True),
-            status_box: f"Error: {e}",
-            console_box: tee_stdout.get_log() + f"\nERROR:\n{e}"
-        }
-
-# --- UI ---
-with gr.Blocks(theme=gr.themes.Soft(), title="DiffLocks Local") as demo:
-    with gr.Row(variant="panel"):
-        gr.Markdown("## 💇‍♀️ DiffLocks Studio (Local RTX)")
+    npz_path = job_dir / "difflocks_output_strands.npz"
+    yield None, None, "🎨 Rendering Preview...", gr.Group(visible=False)
     
+    # 2. PREVIEW
+    prev_path = None
+    fig_3d = None
+    try:
+        d=np.load(npz_path)['positions']
+        s=d[::max(1,len(d)//20000)]; p=s.reshape(-1,3); x,y,z=p[:,0],p[:,1],p[:,2]; rx,ry,rz=x,-z,y
+        plt.style.use('dark_background'); f,ax=plt.subplots(1,3,figsize=(18,6)); f.patch.set_facecolor('#111')
+        for a,u,v,d_ in zip(ax,[rx,ry,rx],[rz,rz,ry],[ry,np.abs(rx),rz]):
+            idx=np.argsort(d_); a.scatter(u[idx],v[idx],c=(d_[idx]-d_.min())/(d_.max()-d_.min()+1e-8),cmap='copper',s=0.5,lw=0); a.axis('off')
+        prev_path = job_dir/"prev.png"
+        f.savefig(prev_path, facecolor='#111', bbox_inches='tight'); plt.close(f)
+        
+        s3=d[::max(1,len(d)//30000)][:,::8,:]; p3=s3.reshape(-1,3); x3,y3,z3=p3[:,0],p3[:,1],p3[:,2]; rx3,ry3,rz3=x3,-z3,y3
+        c3=np.hstack([np.tile(np.linspace(0.3,1,s3.shape[1]),(s3.shape[0],1)),np.zeros((s3.shape[0],1))]).flatten()
+        fig_3d = go.Figure(data=[go.Scatter3d(x=np.hstack([rx3.reshape(s3.shape[:2]),np.full((s3.shape[0],1),np.nan)]).flatten(), y=np.hstack([ry3.reshape(s3.shape[:2]),np.full((s3.shape[0],1),np.nan)]).flatten(), z=np.hstack([rz3.reshape(s3.shape[:2]),np.full((s3.shape[0],1),np.nan)]).flatten(), mode='lines', line=dict(width=1.5,color=c3,colorscale=[[0,'#505050'],[1,'white']],showscale=False))], layout=dict(paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',scene=dict(xaxis=dict(visible=False),yaxis=dict(visible=False),zaxis=dict(visible=False),bgcolor='rgba(0,0,0,0)'),margin=dict(l=0,r=0,b=0,t=0),height=500))
+    except Exception as e: print(f"Viz Error: {e}")
+
+    # 3. EXPORT
+    outputs = [str(npz_path)]
+    blender_keys = [k for k,v in {'.blend':'Blender','.abc':'Alembic','.usd':'USD'}.items() if v in fmts]
+    
+    if blender_keys and cfg.blender_exe.exists():
+        yield None, None, "🟧 Running Blender Export...", gr.Group(visible=False)
+        script = cfg.repo_dir / "inference/converter_blender.py"
+        cmd = [str(cfg.blender_exe), "-b", "-P", str(script), "--", str(npz_path), str(job_dir/"hair")] + [k.replace('.','') for k in blender_keys]
+        subprocess.run(cmd)
+        for k in blender_keys:
+            f = job_dir / f"hair{k}"
+            if f.exists(): outputs.append(str(f))
+            
+    import zipfile
+    zip_f = job_dir / "results.zip"
+    with zipfile.ZipFile(zip_f, 'w') as z:
+        for f in outputs: z.write(f, Path(f).name)
+    
+    yield fig_3d, str(prev_path), "✅ Done!", gr.Group(visible=True), str(zip_f)
+
+if has_zerogpu:
+    run_inference = spaces.GPU(duration=120)(run_inference)
+
+# --- 4. UI ---
+with gr.Blocks(theme=gr.themes.Soft(), title="DiffLocks Studio") as demo:
+    gr.Markdown("# 💇‍♀️ DiffLocks Studio (Universal)")
     with gr.Row():
-        with gr.Column(scale=1):
-            input_img = gr.Image(type="filepath", label="Input Reference", height=320)
-            with gr.Group():
-                cfg_slider = gr.Slider(1.0, 7.5, value=2.0, step=0.5, label="Fidelity Strength")
-                check_blender = gr.Checkbox(label="📦 Export Formats (.blend, .abc, .glb)", value=True)
-                btn_run = gr.Button("✨ GENERATE HAIR", variant="primary", size="lg")
-            
-        with gr.Column(scale=2):
-            status_box = gr.Textbox(label="Status", interactive=False, max_lines=1)
-            with gr.Accordion("Console Logs", open=False):
-                console_box = gr.Code(label="System Output", language="shell", interactive=False, lines=8)
-
-            with gr.Group(visible=False) as result_group:
-                viewer = gr.Model3D(clear_color=[0.8, 0.8, 0.8, 1.0], label="3D Preview (.glb)", interactive=True, height=500)
-                files_out = gr.File(label="Generated Files", interactive=False)
-
-    btn_run.click(fn=predict, inputs=[input_img, cfg_slider, check_blender], outputs=[btn_run, status_box, console_box, result_group, files_out, viewer])
+        with gr.Column():
+            inp = gr.Image(type="filepath", label="Input Face")
+            cfg_s = gr.Slider(1, 7, 2.5, label="CFG Scale")
+            chk = gr.CheckboxGroup(["Blender", "Alembic", "USD"], label="Exports (Requires Blender)", value=[])
+            btn = gr.Button("🚀 Generate", variant="primary")
+        with gr.Column():
+            status = gr.HTML("Ready")
+            with gr.Group(visible=False) as res_grp:
+                with gr.Tabs():
+                    with gr.Tab("3D"): p3d = gr.Plot()
+                    with gr.Tab("2D"): p2d = gr.Image()
+                files = gr.File(label="Download ZIP")
+    btn.click(run_inference, [inp, cfg_s, chk], [p3d, p2d, status, res_grp, files])
 
 if __name__ == "__main__":
-    print("🚀 Starting...", flush=True)
-    demo.queue().launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.queue().launch(share=cfg.needs_share, server_name="0.0.0.0", server_port=7860)

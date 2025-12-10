@@ -1,0 +1,1 @@
+{"run": [{"method": "shell.run", "params": {"venv": "venv", "message": "python app.py", "path": "app"}}]}
