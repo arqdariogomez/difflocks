@@ -14,3 +14,14 @@ opencv-python-headless
 scipy
 trimesh
 huggingface_hub
+
+# --- DEPENDENCIAS CRÍTICAS DE INVESTIGACIÓN ---
+torchdiffeq
+jsonmerge
+clean-fid
+resize-right
+ftfy
+regex
+tqdm
+einops
+safetensors
