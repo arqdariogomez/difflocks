@@ -1,7 +1,8 @@
 # DiffLocks Studio (Docker Edition)
 
+A fork of Difflocks by MeshCapade
 **High-Fidelity 3D Hair Generation from Single Images.**
-*Fork optimized for Local usage (Docker) and Google Colab.*
+*Fork optimized for Kaggle, Google Colab, Kaggle, Pinokio*
 
 ## 🚀 Features
 *   **One-Click Docker Setup:** Run locally on your GPU without messing up your Python environment.
