@@ -1,4 +1,4 @@
-# DiffLocks Studio (Docker Edition)
+# DiffLocks Studio
 
 A fork of Difflocks by MeshCapade
 **High-Fidelity 3D Hair Generation from Single Images.**
